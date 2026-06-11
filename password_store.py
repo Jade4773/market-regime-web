@@ -12,13 +12,13 @@ from user_store import load_users
 
 
 _LOCK = threading.Lock()
-RUNTIME_USERS_FILE = Path(os.getenv("RUNTIME_USERS_FILE", "/tmp/market-regime-users-v2.json"))
+RUNTIME_USERS_FILE = Path(os.getenv("RUNTIME_USERS_FILE", "/tmp/market-regime-users-v3.json"))
 
 
 def get_users() -> dict[str, Any]:
     with _LOCK:
         if not RUNTIME_USERS_FILE.exists():
-            _save_unlocked(load_users())
+            _save_unlocked(_initial_users())
         return _load_unlocked()
 
 
@@ -61,6 +61,26 @@ def _load_unlocked() -> dict[str, Any]:
         return {}
     with RUNTIME_USERS_FILE.open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _initial_users() -> dict[str, Any]:
+    users = load_users()
+    if "admin" in users:
+        users["admin"]["role"] = "admin"
+        users["admin"]["force_change"] = False
+
+    for number in range(1, 21):
+        username = f"user{number}"
+        users.setdefault(
+            username,
+            {
+                "password_hash": generate_password_hash(username),
+                "enabled": True,
+                "force_change": True,
+                "role": "user",
+            },
+        )
+    return users
 
 
 def _save_unlocked(users: dict[str, Any]) -> None:
