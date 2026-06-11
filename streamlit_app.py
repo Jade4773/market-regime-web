@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import streamlit as st
 
 from market_data import get_market_snapshot
-from password_store import authenticate, change_password, export_users, get_users, set_enabled
 
 
 st.set_page_config(
@@ -14,30 +12,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
-
-
-def get_secret(name: str, default: str = "") -> str:
-    env_value = os.getenv(name)
-    if env_value is not None:
-        return env_value
-
-    lower_name = name.lower()
-    try:
-        if name in st.secrets:
-            return str(st.secrets[name])
-        if lower_name in st.secrets:
-            return str(st.secrets[lower_name])
-        if "auth" in st.secrets and lower_name in st.secrets["auth"]:
-            return str(st.secrets["auth"][lower_name])
-    except FileNotFoundError:
-        pass
-    return default
-
-
-def configure_runtime() -> None:
-    users_json = get_secret("USERS_JSON")
-    if users_json:
-        os.environ["USERS_JSON"] = users_json
 
 
 def format_number(value: float | int | None, digits: int = 2) -> str:
@@ -50,40 +24,6 @@ def format_pct(value: float | None) -> str:
     if value is None:
         return "-"
     return f"{value:+.2f}%"
-
-
-def login_screen() -> None:
-    st.markdown(
-        """
-        <style>
-        .block-container { max-width: 460px; padding-top: 15vh; }
-        [data-testid="stForm"] {
-            border: 1px solid #d9ded8;
-            border-radius: 8px;
-            padding: 28px;
-            background: #ffffff;
-            box-shadow: 0 20px 60px rgba(23, 32, 27, 0.08);
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.caption("Private Market Dashboard")
-    st.title("시장 국면 확인")
-
-    with st.form("login_form", clear_on_submit=False):
-        username = st.text_input("아이디", autocomplete="username")
-        password = st.text_input("비밀번호", type="password", autocomplete="current-password")
-        submitted = st.form_submit_button("접속", use_container_width=True)
-
-    if submitted:
-        success, record = authenticate(username, password)
-        if success and record:
-            st.session_state["user"] = username.strip().lower()
-            st.session_state["role"] = record.get("role", "user")
-            st.session_state["force_change"] = record.get("force_change", False)
-            st.rerun()
-        st.error("아이디 또는 비밀번호가 맞지 않습니다.")
 
 
 def badge_style(regime: str) -> str:
@@ -243,92 +183,9 @@ def dashboard() -> None:
         unsafe_allow_html=True,
     )
 
-    top_left, top_right = st.columns([1, 0.18])
-    with top_left:
-        st.caption("William O'Neil Market Pulse")
-        st.title("지수별 매수/매도 국면")
-    with top_right:
-        if st.button("로그아웃", use_container_width=True):
-            st.session_state.clear()
-            st.rerun()
-
-    is_admin = st.session_state.get("role") == "admin"
-    tabs = st.tabs(["계정", "시장 국면", "사용자 관리"] if is_admin else ["계정", "시장 국면"])
-    account_tab, dashboard_tab = tabs[:2]
-
-    with account_tab:
-        render_account_settings()
-
-    with dashboard_tab:
-        render_market_dashboard()
-
-    if is_admin:
-        with tabs[2]:
-            render_admin_settings()
-
-
-def render_account_settings() -> None:
-    st.subheader("내 비밀번호 변경")
-    if st.session_state.get("force_change"):
-        st.warning("임시 비밀번호를 사용 중입니다. 새 비밀번호로 변경해 주세요.")
-
-    with st.form("change_own_password"):
-        current = st.text_input("현재 비밀번호", type="password")
-        new = st.text_input("새 비밀번호", type="password")
-        confirm = st.text_input("새 비밀번호 확인", type="password")
-        submitted = st.form_submit_button("비밀번호 변경")
-
-    if submitted:
-        success, _ = authenticate(st.session_state["user"], current)
-        if not success:
-            st.error("현재 비밀번호가 맞지 않습니다.")
-        elif len(new) < 8:
-            st.error("새 비밀번호는 8자 이상이어야 합니다.")
-        elif new != confirm:
-            st.error("새 비밀번호 확인이 일치하지 않습니다.")
-        else:
-            change_password(st.session_state["user"], new)
-            st.session_state["force_change"] = False
-            st.success("비밀번호가 변경되었습니다.")
-
-
-def render_admin_settings() -> None:
-    st.subheader("사용자 관리")
-    users = get_users()
-    usernames = [name for name in sorted(users) if name != "admin"]
-    selected = st.selectbox("사용자", usernames)
-    record = users[selected]
-    st.caption(
-        f"상태: {'사용 가능' if record.get('enabled', True) else '사용 중지'} · "
-        f"비밀번호 변경 필요: {'예' if record.get('force_change', False) else '아니오'}"
-    )
-
-    with st.form("admin_reset_password"):
-        reset_password = st.text_input("새 임시 비밀번호", type="password")
-        reset_confirm = st.text_input("새 임시 비밀번호 확인", type="password")
-        reset = st.form_submit_button("비밀번호 초기화")
-
-    if reset:
-        if len(reset_password) < 4:
-            st.error("임시 비밀번호는 4자 이상이어야 합니다.")
-        elif reset_password != reset_confirm:
-            st.error("비밀번호 확인이 일치하지 않습니다.")
-        else:
-            change_password(selected, reset_password, force_change=True)
-            st.success(f"{selected}의 비밀번호를 초기화했습니다.")
-
-    enabled = record.get("enabled", True)
-    if st.button("사용 중지" if enabled else "사용 허용"):
-        set_enabled(selected, not enabled)
-        st.success(f"{selected} 상태를 변경했습니다.")
-        st.rerun()
-
-    st.download_button(
-        "사용자 목록 백업",
-        data=export_users(),
-        file_name="users-backup.json",
-        mime="application/json",
-    )
+    st.caption("William O'Neil Market Pulse")
+    st.title("지수별 매수/매도 국면")
+    render_market_dashboard()
 
 
 def render_market_dashboard() -> None:
@@ -372,17 +229,7 @@ def render_market_dashboard() -> None:
 
 
 def main() -> None:
-    configure_runtime()
-    if "user" not in st.session_state:
-        login_screen()
-    elif st.session_state.get("force_change"):
-        st.title("비밀번호 변경 필요")
-        render_account_settings()
-        if st.button("로그아웃"):
-            st.session_state.clear()
-            st.rerun()
-    else:
-        dashboard()
+    dashboard()
 
 
 if __name__ == "__main__":
