@@ -19,6 +19,8 @@ https://appapppy-cmks8kxu73qik7iqxaiux4.streamlit.app/
   - S&P 500: `^GSPC`
 - Detects:
   - Follow-through days
+  - Rally-attempt resets when the day-one low is undercut
+  - Follow-through quality based on timing, early distribution, and later failure
   - Distribution days
   - Stalling days
   - Distribution clusters in the latest 11 sessions

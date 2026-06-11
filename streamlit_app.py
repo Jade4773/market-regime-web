@@ -136,10 +136,23 @@ def render_market_card(item: dict[str, Any]) -> None:
     ftd = item.get("follow_through")
     if ftd:
         st.caption(
-            f"팔로우쓰루데이: {ftd['date']} · {format_pct(ftd['gain_pct'])} · {ftd['day_number']}일차"
+            f"팔로우쓰루데이: {ftd['date']} · {format_pct(ftd['gain_pct'])} · "
+            f"{ftd['day_number']}일차 · 품질: {ftd['quality']}"
         )
+        st.caption(ftd["quality_reason"])
     else:
         st.caption("팔로우쓰루데이: 최근 랠리 시도 이후 확인 안 됨")
+
+    rally = item.get("rally")
+    if rally:
+        with st.expander("랠리 시도 상태"):
+            st.write(
+                f"시작일: {rally['start_date']} · 첫날 저가: {format_number(rally['start_low'])} · "
+                f"현재 {rally['days_since_start']}일차"
+            )
+            st.write(f"최근 60거래일 내 저가 돌파로 재시작: {rally['reset_count']}회")
+            if rally.get("last_reset_reason"):
+                st.caption(rally["last_reset_reason"])
 
     distribution_days = item.get("distribution_days") or []
     if distribution_days:
@@ -325,6 +338,18 @@ def render_market_dashboard() -> None:
               직전 2일 중 하루가 0.2% 이상 상승
             - **제거:** 발생 후 25거래일 경과 또는 해당 종가 대비 지수가 5% 상승
             - **집중 경고:** 최근 11거래일 내 활성 분산 신호 4회 이상
+            """
+        )
+    with st.expander("팔로우쓰루데이 판정 기준"):
+        st.markdown(
+            """
+            - **랠리 첫날:** 지수가 전일보다 상승 마감하거나 일중 범위 상단 절반에서 마감
+            - **카운트 재시작:** 이후 지수가 랠리 첫날 저가를 하향 돌파
+            - **팔로우쓰루데이:** 랠리 4일차 이후 지수가 최소 1% 상승하고 ETF 대체 거래량 증가
+            - **품질 양호:** 통상적인 4~7일차에 확인
+            - **늦은 확인:** 8일차 이후 확인
+            - **품질 주의:** 확인 후 5거래일 내 분산일 발생
+            - **실패:** 확인 후 랠리 첫날 저가 하향 돌파
             """
         )
 

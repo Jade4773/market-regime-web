@@ -50,7 +50,7 @@
             <div>
               <h3>팔로우쓰루데이</h3>
               {% if item.follow_through %}
-                <p>{{ item.follow_through.date }} · {{ "{:+.2f}%".format(item.follow_through.gain_pct) }} · {{ item.follow_through.day_number }}일차</p>
+                <p>{{ item.follow_through.date }} · {{ "{:+.2f}%".format(item.follow_through.gain_pct) }} · {{ item.follow_through.day_number }}일차 · {{ item.follow_through.quality }}</p>
               {% else %}
                 <p>최근 랠리 시도 이후 확인 안 됨</p>
               {% endif %}

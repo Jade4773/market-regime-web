@@ -14,10 +14,10 @@ from market_rules import analyze_index
 
 
 INDEXES = {
-    "kospi200": {"name": "KOSPI 200", "ticker": "^KS200", "volume_ticker": "069500.KS", "currency": "KRW"},
-    "kospi": {"name": "KOSPI", "ticker": "^KS11", "volume_ticker": "069500.KS", "currency": "KRW"},
-    "nasdaq100": {"name": "NASDAQ 100", "ticker": "^NDX", "volume_ticker": "QQQ", "currency": "USD"},
-    "sp500": {"name": "S&P 500", "ticker": "^GSPC", "volume_ticker": "SPY", "currency": "USD"},
+    "kospi200": {"name": "KOSPI 200", "ticker": "^KS200", "volume_ticker": "069500.KS", "ftd_min_gain_pct": 1.0, "currency": "KRW"},
+    "kospi": {"name": "KOSPI", "ticker": "^KS11", "volume_ticker": "069500.KS", "ftd_min_gain_pct": 1.0, "currency": "KRW"},
+    "nasdaq100": {"name": "NASDAQ 100", "ticker": "^NDX", "volume_ticker": "QQQ", "ftd_min_gain_pct": 1.0, "currency": "USD"},
+    "sp500": {"name": "S&P 500", "ticker": "^GSPC", "volume_ticker": "SPY", "ftd_min_gain_pct": 1.0, "currency": "USD"},
 }
 
 
