@@ -20,6 +20,9 @@ https://appapppy-cmks8kxu73qik7iqxaiux4.streamlit.app/
 - Detects:
   - Follow-through days
   - Distribution days
+  - Stalling days
+  - Distribution clusters in the latest 11 sessions
+  - Distribution-day expiration after 25 sessions or a 5% index rally
   - Current buy, caution, or sell regime
 
 ## Streamlit

@@ -126,6 +126,12 @@ def render_market_card(item: dict[str, Any]) -> None:
     c2.metric("거래량", f"{item['volume']:,.0f}")
     c3.metric("거래량 변화", format_pct(item["volume_change_pct"]))
     c4.metric("50일선", format_number(item["ma50"]))
+    st.caption(
+        f"거래량 기준: {item['volume_ticker']} · "
+        f"최근 11거래일 분산 신호: {item['distribution_cluster_count']}회"
+    )
+    if item["distribution_clustered"]:
+        st.warning("최근 11거래일에 분산 신호가 집중되어 있습니다.")
 
     ftd = item.get("follow_through")
     if ftd:
@@ -142,8 +148,10 @@ def render_market_card(item: dict[str, Any]) -> None:
                 [
                     {
                         "날짜": day["date"],
+                        "유형": day["type"],
                         "등락률": format_pct(day["change_pct"]),
                         "종가": format_number(day["close"]),
+                        "경과": f"{day['age_sessions']}거래일",
                     }
                     for day in distribution_days
                 ],
@@ -152,6 +160,22 @@ def render_market_card(item: dict[str, Any]) -> None:
             )
     else:
         st.caption("최근 25거래일 내 분산일 없음")
+
+    expired = item.get("expired_distribution_days") or []
+    if expired:
+        with st.expander("제거된 분산 신호"):
+            st.dataframe(
+                [
+                    {
+                        "날짜": day["date"],
+                        "유형": day["type"],
+                        "제거 사유": day["expiry_reason"],
+                    }
+                    for day in expired
+                ],
+                hide_index=True,
+                use_container_width=True,
+            )
 
 
 def dashboard() -> None:
@@ -289,6 +313,20 @@ def render_admin_settings() -> None:
 def render_market_dashboard() -> None:
     with st.spinner("야후 파이낸스에서 데이터를 가져오는 중입니다."):
         snapshot = get_market_snapshot()
+
+    summary = snapshot["market_summary"]
+    st.subheader(summary["regime"])
+    st.info(summary["explanation"])
+    with st.expander("분산일 판정 기준"):
+        st.markdown(
+            """
+            - **분산일:** 지수가 0.2% 이상 하락하고 ETF 대체 거래량이 전일보다 증가
+            - **스톨링:** 0% 이상 0.4% 미만 상승, 일중 범위 하단 절반 마감, 거래량 증가,
+              직전 2일 중 하루가 0.2% 이상 상승
+            - **제거:** 발생 후 25거래일 경과 또는 해당 종가 대비 지수가 5% 상승
+            - **집중 경고:** 최근 11거래일 내 활성 분산 신호 4회 이상
+            """
+        )
 
     items = list(snapshot["items"].values())
     for row_start in range(0, len(items), 2):

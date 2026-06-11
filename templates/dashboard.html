@@ -39,6 +39,7 @@
             <span style="width: {{ item.score }}%"></span>
           </div>
           <p class="explain">{{ item.explanation }}</p>
+          <p class="explain">거래량 기준: {{ item.volume_ticker }} · 최근 11거래일 분산 신호 {{ item.distribution_cluster_count }}회</p>
           <dl class="stats">
             <div><dt>분산일</dt><dd>{{ item.distribution_count }}회</dd></div>
             <div><dt>거래량</dt><dd>{{ "{:,.0f}".format(item.volume) }}</dd></div>
@@ -59,7 +60,7 @@
               {% if item.distribution_days %}
                 <ul>
                   {% for day in item.distribution_days %}
-                    <li>{{ day.date }} · {{ "{:+.2f}%".format(day.change_pct) }}</li>
+                    <li>{{ day.date }} · {{ day.type }} · {{ "{:+.2f}%".format(day.change_pct) }}</li>
                   {% endfor %}
                 </ul>
               {% else %}

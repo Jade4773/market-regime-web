@@ -14,10 +14,10 @@ from market_rules import analyze_index
 
 
 INDEXES = {
-    "kospi200": {"name": "KOSPI 200", "ticker": "^KS200", "currency": "KRW"},
-    "kospi": {"name": "KOSPI", "ticker": "^KS11", "currency": "KRW"},
-    "nasdaq100": {"name": "NASDAQ 100", "ticker": "^NDX", "currency": "USD"},
-    "sp500": {"name": "S&P 500", "ticker": "^GSPC", "currency": "USD"},
+    "kospi200": {"name": "KOSPI 200", "ticker": "^KS200", "volume_ticker": "069500.KS", "currency": "KRW"},
+    "kospi": {"name": "KOSPI", "ticker": "^KS11", "volume_ticker": "069500.KS", "currency": "KRW"},
+    "nasdaq100": {"name": "NASDAQ 100", "ticker": "^NDX", "volume_ticker": "QQQ", "currency": "USD"},
+    "sp500": {"name": "S&P 500", "ticker": "^GSPC", "volume_ticker": "SPY", "currency": "USD"},
 }
 
 
@@ -40,7 +40,7 @@ def get_market_snapshot() -> dict[str, Any]:
     results = {}
     for key, meta in INDEXES.items():
         try:
-            history = fetch_history(meta["ticker"])
+            history = fetch_history(meta["ticker"], meta["volume_ticker"])
             results[key] = analyze_index(meta, history)
         except Exception as exc:
             results[key] = {
@@ -49,12 +49,26 @@ def get_market_snapshot() -> dict[str, Any]:
                 "error": f"데이터를 가져오지 못했습니다: {exc}",
             }
 
-    snapshot = {"items": results, "cache_seconds": ttl}
+    snapshot = {"items": results, "market_summary": build_market_summary(results), "cache_seconds": ttl}
     _CACHE = CacheItem(created_at=now, value=snapshot)
     return snapshot
 
 
-def fetch_history(ticker: str) -> pd.DataFrame:
+def fetch_history(ticker: str, volume_ticker: str | None = None) -> pd.DataFrame:
+    df = fetch_yahoo_chart(ticker)
+    if volume_ticker and volume_ticker != ticker:
+        proxy = fetch_yahoo_chart(volume_ticker)[["Close", "Volume"]].rename(
+            columns={"Close": "VolumeProxyClose", "Volume": "VolumeProxy"}
+        )
+        df = df.join(proxy, how="left")
+        df["Volume"] = df["VolumeProxy"].where(df["VolumeProxy"].notna(), df["Volume"])
+        df["Value"] = df["VolumeProxyClose"].fillna(df["Close"]) * df["Volume"]
+    else:
+        df["Value"] = df["Close"] * df["Volume"]
+    return df
+
+
+def fetch_yahoo_chart(ticker: str) -> pd.DataFrame:
     encoded = quote(ticker, safe="")
     url = (
         f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}"
@@ -91,5 +105,15 @@ def fetch_history(ticker: str) -> pd.DataFrame:
     )
     df.index = pd.to_datetime(df.index)
     df = df.dropna(subset=["Close"]).sort_index().copy()
-    df["Value"] = df["Close"] * df["Volume"]
     return df
+
+
+def build_market_summary(results: dict[str, Any]) -> dict[str, Any]:
+    valid = [item for item in results.values() if not item.get("error")]
+    pressured = [item for item in valid if item["distribution_count"] >= 4 or item["distribution_clustered"]]
+    defensive = [item for item in valid if item["regime"] == "매도/방어"]
+    if len(defensive) >= 2 or len(pressured) >= 3:
+        return {"regime": "광범위한 매도 압력", "explanation": "여러 주요 지수에서 분산일 부담이 동시에 높습니다."}
+    if len(pressured) >= 2:
+        return {"regime": "시장 전반 주의", "explanation": "복수 지수에서 분산일이 누적되고 있습니다."}
+    return {"regime": "시장 전반 양호", "explanation": "주요 지수 전반의 분산일 부담이 제한적입니다."}

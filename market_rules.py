@@ -11,8 +11,13 @@ class RuleSettings:
     ftd_min_gain_pct: float = 1.25
     distribution_min_loss_pct: float = -0.20
     distribution_window_days: int = 25
+    distribution_rally_expiry_pct: float = 5.0
     distribution_warning_count: int = 4
     distribution_sell_count: int = 6
+    distribution_cluster_window: int = 11
+    distribution_cluster_count: int = 4
+    stall_max_gain_pct: float = 0.40
+    stall_prior_gain_pct: float = 0.20
     rally_lookback_days: int = 35
     min_ftd_day: int = 4
 
@@ -28,12 +33,19 @@ def analyze_index(meta: dict[str, str], history: pd.DataFrame) -> dict[str, Any]
     rally = find_rally_attempt(df)
     follow_through = find_follow_through(df, rally["start_pos"]) if rally else None
     distribution_days = find_distribution_days(df)
-    active_distribution_days = distribution_days[-SETTINGS.distribution_window_days :]
-    active_count = sum(1 for item in active_distribution_days if item["is_distribution"])
+    active_distribution_days = [item for item in distribution_days if item["is_active"]]
+    active_count = len(active_distribution_days)
+    cluster_count = sum(
+        1
+        for item in active_distribution_days
+        if item["age_sessions"] < SETTINGS.distribution_cluster_window
+    )
+    distribution_clustered = cluster_count >= SETTINGS.distribution_cluster_count
 
     regime, score, explanation = classify_regime(
         has_ftd=follow_through is not None,
         distribution_count=active_count,
+        distribution_clustered=distribution_clustered,
         close_above_ma50=bool(df.iloc[-1]["close_above_ma50"]),
         close_above_ma200=bool(df.iloc[-1]["close_above_ma200"]),
     )
@@ -43,6 +55,7 @@ def analyze_index(meta: dict[str, str], history: pd.DataFrame) -> dict[str, Any]
     return {
         "name": meta["name"],
         "ticker": meta["ticker"],
+        "volume_ticker": meta.get("volume_ticker", meta["ticker"]),
         "currency": meta["currency"],
         "last_date": latest.name.strftime("%Y-%m-%d"),
         "close": float(latest["Close"]),
@@ -58,7 +71,12 @@ def analyze_index(meta: dict[str, str], history: pd.DataFrame) -> dict[str, Any]
         "rally": rally,
         "follow_through": follow_through,
         "distribution_count": active_count,
-        "distribution_days": [d for d in active_distribution_days if d["is_distribution"]][-8:],
+        "distribution_cluster_count": cluster_count,
+        "distribution_clustered": distribution_clustered,
+        "distribution_days": active_distribution_days[-8:],
+        "expired_distribution_days": [
+            item for item in distribution_days if not item["is_active"]
+        ][-8:],
     }
 
 
@@ -66,7 +84,6 @@ def prepare(history: pd.DataFrame) -> pd.DataFrame:
     df = history.sort_index().copy()
     df["pct_change"] = df["Close"].pct_change() * 100
     df["volume_up"] = df["Volume"] > df["Volume"].shift(1)
-    df["value_up"] = df["Value"] > df["Value"].shift(1)
     df["ma50"] = df["Close"].rolling(50).mean()
     df["ma200"] = df["Close"].rolling(200).mean()
     df["close_above_ma50"] = df["Close"] > df["ma50"]
@@ -92,9 +109,7 @@ def find_follow_through(df: pd.DataFrame, rally_start_pos: int) -> dict[str, Any
     start = rally_start_pos + SETTINGS.min_ftd_day - 1
     for pos in range(start, len(df)):
         row = df.iloc[pos]
-        if row["pct_change"] >= SETTINGS.ftd_min_gain_pct and (
-            bool(row["volume_up"]) or bool(row["value_up"])
-        ):
+        if row["pct_change"] >= SETTINGS.ftd_min_gain_pct and bool(row["volume_up"]):
             return {
                 "date": row.name.strftime("%Y-%m-%d"),
                 "gain_pct": float(row["pct_change"]),
@@ -106,16 +121,62 @@ def find_follow_through(df: pd.DataFrame, rally_start_pos: int) -> dict[str, Any
 
 def find_distribution_days(df: pd.DataFrame) -> list[dict[str, Any]]:
     days = []
-    for _, row in df.tail(SETTINGS.distribution_window_days).iterrows():
-        is_distribution = row["pct_change"] <= SETTINGS.distribution_min_loss_pct and (
-            bool(row["volume_up"]) or bool(row["value_up"])
+    lookback = df.tail(SETTINGS.distribution_window_days + 1)
+    start_pos = len(df) - len(lookback)
+
+    for local_pos, (_, row) in enumerate(lookback.iterrows()):
+        absolute_pos = start_pos + local_pos
+        volume_confirms = bool(row["volume_up"])
+        is_standard = bool(
+            row["pct_change"] <= SETTINGS.distribution_min_loss_pct and volume_confirms
         )
+
+        prior_two = df.iloc[max(0, absolute_pos - 2) : absolute_pos]
+        prior_progress = bool(
+            (prior_two["pct_change"] >= SETTINGS.stall_prior_gain_pct).any()
+        )
+        day_range = row["High"] - row["Low"]
+        closes_lower_half = bool(
+            day_range > 0 and row["Close"] <= row["Low"] + day_range / 2
+        )
+        is_stall = bool(
+            0 <= row["pct_change"] < SETTINGS.stall_max_gain_pct
+            and volume_confirms
+            and closes_lower_half
+            and prior_progress
+        )
+
+        is_distribution = bool(is_standard or is_stall)
+        if not is_distribution:
+            continue
+
+        age_sessions = len(df) - absolute_pos - 1
+        later_high = df.iloc[absolute_pos + 1 :]["Close"].max()
+        rallied_5_pct = bool(
+            pd.notna(later_high)
+            and later_high
+            >= row["Close"] * (1 + SETTINGS.distribution_rally_expiry_pct / 100)
+        )
+        is_active = bool(
+            age_sessions < SETTINGS.distribution_window_days and not rallied_5_pct
+        )
+        expiry_reason = None
+        if not is_active:
+            expiry_reason = (
+                "25거래일 경과"
+                if age_sessions >= SETTINGS.distribution_window_days
+                else "종가 대비 5% 상승"
+            )
+
         days.append(
             {
                 "date": row.name.strftime("%Y-%m-%d"),
-                "change_pct": float(row["pct_change"]) if pd.notna(row["pct_change"]) else 0,
+                "change_pct": float(row["pct_change"]),
                 "close": float(row["Close"]),
-                "is_distribution": bool(is_distribution),
+                "type": "스톨링" if is_stall else "분산일",
+                "is_active": is_active,
+                "age_sessions": age_sessions,
+                "expiry_reason": expiry_reason,
             }
         )
     return days
@@ -124,6 +185,7 @@ def find_distribution_days(df: pd.DataFrame) -> list[dict[str, Any]]:
 def classify_regime(
     has_ftd: bool,
     distribution_count: int,
+    distribution_clustered: bool,
     close_above_ma50: bool,
     close_above_ma200: bool,
 ) -> tuple[str, int, str]:
@@ -138,8 +200,10 @@ def classify_regime(
 
     if not has_ftd or distribution_count >= SETTINGS.distribution_sell_count:
         return "매도/방어", max(score, 0), "팔로우쓰루데이가 없거나 분산일 부담이 큽니다."
+    if distribution_clustered:
+        return "주의", max(score, 0), "최근 11거래일에 분산일이 집중되어 있습니다."
     if distribution_count >= SETTINGS.distribution_warning_count or not close_above_ma50:
-        return "주의", max(score, 0), "상승 추세는 있으나 분산일 또는 50일선 이탈을 확인해야 합니다."
+        return "주의", max(score, 0), "분산일 누적 또는 50일선 이탈을 확인해야 합니다."
     return "매수 우위", min(score, 100), "팔로우쓰루데이 이후 추세와 수급 조건이 우호적입니다."
 
 
