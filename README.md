@@ -2,6 +2,10 @@
 
 KOSPI, KOSPI 200, NASDAQ 100, S&P 500 indices are downloaded from Yahoo Finance and evaluated with a William O'Neil style follow-through day and distribution day framework.
 
+Live Streamlit app:
+
+https://appapppy-cmks8kxu73qik7iqxaiux4.streamlit.app/
+
 ## What It Does
 
 - Password login for a small allow-list of users.
