@@ -17,6 +17,10 @@ st.set_page_config(
 
 
 def get_secret(name: str, default: str = "") -> str:
+    env_value = os.getenv(name)
+    if env_value is not None:
+        return env_value
+
     lower_name = name.lower()
     try:
         if name in st.secrets:
@@ -27,7 +31,7 @@ def get_secret(name: str, default: str = "") -> str:
             return str(st.secrets["auth"][lower_name])
     except FileNotFoundError:
         pass
-    return os.getenv(name, default)
+    return default
 
 
 def configure_runtime() -> None:
