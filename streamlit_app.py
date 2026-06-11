@@ -135,11 +135,15 @@ def render_market_card(item: dict[str, Any]) -> None:
 
     ftd = item.get("follow_through")
     if ftd:
+        ftd_quality = ftd.get("quality", "기존 신호")
+        ftd_quality_reason = ftd.get(
+            "quality_reason", "이전 계산 결과입니다. 다음 데이터 갱신 시 품질이 재평가됩니다."
+        )
         st.caption(
             f"팔로우쓰루데이: {ftd['date']} · {format_pct(ftd['gain_pct'])} · "
-            f"{ftd['day_number']}일차 · 품질: {ftd['quality']}"
+            f"{ftd['day_number']}일차 · 품질: {ftd_quality}"
         )
-        st.caption(ftd["quality_reason"])
+        st.caption(ftd_quality_reason)
     else:
         st.caption("팔로우쓰루데이: 최근 랠리 시도 이후 확인 안 됨")
 
@@ -147,10 +151,14 @@ def render_market_card(item: dict[str, Any]) -> None:
     if rally:
         with st.expander("랠리 시도 상태"):
             st.write(
-                f"시작일: {rally['start_date']} · 첫날 저가: {format_number(rally['start_low'])} · "
+                f"시작일: {rally['start_date']} · 첫날 저가: "
+                f"{format_number(rally.get('start_low'))} · "
                 f"현재 {rally['days_since_start']}일차"
             )
-            st.write(f"최근 60거래일 내 저가 돌파로 재시작: {rally['reset_count']}회")
+            st.write(
+                f"최근 60거래일 내 저가 돌파로 재시작: "
+                f"{rally.get('reset_count', 0)}회"
+            )
             if rally.get("last_reset_reason"):
                 st.caption(rally["last_reset_reason"])
 

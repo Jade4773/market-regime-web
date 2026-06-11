@@ -13,6 +13,9 @@ import requests
 from market_rules import analyze_index
 
 
+SNAPSHOT_SCHEMA_VERSION = 3
+
+
 INDEXES = {
     "kospi200": {"name": "KOSPI 200", "ticker": "^KS200", "volume_ticker": "069500.KS", "ftd_min_gain_pct": 1.0, "currency": "KRW"},
     "kospi": {"name": "KOSPI", "ticker": "^KS11", "volume_ticker": "069500.KS", "ftd_min_gain_pct": 1.0, "currency": "KRW"},
@@ -25,6 +28,7 @@ INDEXES = {
 class CacheItem:
     created_at: float
     value: dict[str, Any]
+    schema_version: int
 
 
 _CACHE: CacheItem | None = None
@@ -34,7 +38,11 @@ def get_market_snapshot() -> dict[str, Any]:
     global _CACHE
     ttl = int(os.getenv("CACHE_SECONDS", "900"))
     now = time.time()
-    if _CACHE and now - _CACHE.created_at < ttl:
+    if (
+        _CACHE
+        and _CACHE.schema_version == SNAPSHOT_SCHEMA_VERSION
+        and now - _CACHE.created_at < ttl
+    ):
         return _CACHE.value
 
     results = {}
@@ -50,7 +58,11 @@ def get_market_snapshot() -> dict[str, Any]:
             }
 
     snapshot = {"items": results, "market_summary": build_market_summary(results), "cache_seconds": ttl}
-    _CACHE = CacheItem(created_at=now, value=snapshot)
+    _CACHE = CacheItem(
+        created_at=now,
+        value=snapshot,
+        schema_version=SNAPSHOT_SCHEMA_VERSION,
+    )
     return snapshot
 
 
