@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import json
 import os
 from typing import Any
 
 import streamlit as st
-from werkzeug.security import check_password_hash
 
 from market_data import get_market_snapshot
-from user_store import load_users
+from password_store import authenticate, change_password, export_users, get_users, set_enabled
 
 
 st.set_page_config(
@@ -32,19 +30,10 @@ def get_secret(name: str, default: str = "") -> str:
     return os.getenv(name, default)
 
 
-def load_allowed_users() -> dict[str, Any]:
+def configure_runtime() -> None:
     users_json = get_secret("USERS_JSON")
     if users_json:
-        return json.loads(users_json)
-    return load_users()
-
-
-def authenticate(username: str, password: str) -> bool:
-    users = load_allowed_users()
-    record = users.get(username.strip().lower())
-    if not record or not record.get("enabled", True):
-        return False
-    return check_password_hash(record["password_hash"], password)
+        os.environ["USERS_JSON"] = users_json
 
 
 def format_number(value: float | int | None, digits: int = 2) -> str:
@@ -84,8 +73,11 @@ def login_screen() -> None:
         submitted = st.form_submit_button("접속", use_container_width=True)
 
     if submitted:
-        if authenticate(username, password):
+        success, record = authenticate(username, password)
+        if success and record:
             st.session_state["user"] = username.strip().lower()
+            st.session_state["role"] = record.get("role", "user")
+            st.session_state["force_change"] = record.get("force_change", False)
             st.rerun()
         st.error("아이디 또는 비밀번호가 맞지 않습니다.")
 
@@ -208,9 +200,89 @@ def dashboard() -> None:
         st.title("지수별 매수/매도 국면")
     with top_right:
         if st.button("로그아웃", use_container_width=True):
-            st.session_state.pop("user", None)
+            st.session_state.clear()
             st.rerun()
 
+    is_admin = st.session_state.get("role") == "admin"
+    tabs = st.tabs(["계정", "시장 국면", "사용자 관리"] if is_admin else ["계정", "시장 국면"])
+    account_tab, dashboard_tab = tabs[:2]
+
+    with account_tab:
+        render_account_settings()
+
+    with dashboard_tab:
+        render_market_dashboard()
+
+    if is_admin:
+        with tabs[2]:
+            render_admin_settings()
+
+
+def render_account_settings() -> None:
+    st.subheader("내 비밀번호 변경")
+    if st.session_state.get("force_change"):
+        st.warning("임시 비밀번호를 사용 중입니다. 새 비밀번호로 변경해 주세요.")
+
+    with st.form("change_own_password"):
+        current = st.text_input("현재 비밀번호", type="password")
+        new = st.text_input("새 비밀번호", type="password")
+        confirm = st.text_input("새 비밀번호 확인", type="password")
+        submitted = st.form_submit_button("비밀번호 변경")
+
+    if submitted:
+        success, _ = authenticate(st.session_state["user"], current)
+        if not success:
+            st.error("현재 비밀번호가 맞지 않습니다.")
+        elif len(new) < 8:
+            st.error("새 비밀번호는 8자 이상이어야 합니다.")
+        elif new != confirm:
+            st.error("새 비밀번호 확인이 일치하지 않습니다.")
+        else:
+            change_password(st.session_state["user"], new)
+            st.session_state["force_change"] = False
+            st.success("비밀번호가 변경되었습니다.")
+
+
+def render_admin_settings() -> None:
+    st.subheader("사용자 관리")
+    users = get_users()
+    usernames = [name for name in sorted(users) if name != "admin"]
+    selected = st.selectbox("사용자", usernames)
+    record = users[selected]
+    st.caption(
+        f"상태: {'사용 가능' if record.get('enabled', True) else '사용 중지'} · "
+        f"비밀번호 변경 필요: {'예' if record.get('force_change', False) else '아니오'}"
+    )
+
+    with st.form("admin_reset_password"):
+        reset_password = st.text_input("새 임시 비밀번호", type="password")
+        reset_confirm = st.text_input("새 임시 비밀번호 확인", type="password")
+        reset = st.form_submit_button("비밀번호 초기화")
+
+    if reset:
+        if len(reset_password) < 4:
+            st.error("임시 비밀번호는 4자 이상이어야 합니다.")
+        elif reset_password != reset_confirm:
+            st.error("비밀번호 확인이 일치하지 않습니다.")
+        else:
+            change_password(selected, reset_password, force_change=True)
+            st.success(f"{selected}의 비밀번호를 초기화했습니다.")
+
+    enabled = record.get("enabled", True)
+    if st.button("사용 중지" if enabled else "사용 허용"):
+        set_enabled(selected, not enabled)
+        st.success(f"{selected} 상태를 변경했습니다.")
+        st.rerun()
+
+    st.download_button(
+        "사용자 목록 백업",
+        data=export_users(),
+        file_name="users-backup.json",
+        mime="application/json",
+    )
+
+
+def render_market_dashboard() -> None:
     with st.spinner("야후 파이낸스에서 데이터를 가져오는 중입니다."):
         snapshot = get_market_snapshot()
 
@@ -225,8 +297,15 @@ def dashboard() -> None:
 
 
 def main() -> None:
+    configure_runtime()
     if "user" not in st.session_state:
         login_screen()
+    elif st.session_state.get("force_change"):
+        st.title("비밀번호 변경 필요")
+        render_account_settings()
+        if st.button("로그아웃"):
+            st.session_state.clear()
+            st.rerun()
     else:
         dashboard()
 

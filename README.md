@@ -9,6 +9,8 @@ https://appapppy-cmks8kxu73qik7iqxaiux4.streamlit.app/
 ## What It Does
 
 - Password login for a small allow-list of users.
+- Users can change their own passwords.
+- The administrator can reset passwords and enable or disable users.
 - Fetches daily close, volume, and traded value proxy from Yahoo Finance's chart endpoint.
 - Shows market status for:
   - KOSPI: `^KS11`

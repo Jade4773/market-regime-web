@@ -70,6 +70,24 @@ def print_users_json() -> None:
     print(json.dumps(users, ensure_ascii=False, separators=(",", ":")))
 
 
+def seed_users() -> None:
+    path = users_path()
+    users = load_users(path)
+    for number in range(1, 21):
+        username = f"user{number}"
+        users[username] = {
+            "password_hash": generate_password_hash(username),
+            "enabled": True,
+            "force_change": True,
+            "role": "user",
+        }
+    if "admin" in users:
+        users["admin"]["role"] = "admin"
+        users["admin"]["force_change"] = False
+    save_users(path, users)
+    print("Saved users: user1 through user20")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -82,6 +100,7 @@ def main() -> None:
     enable.add_argument("username")
     sub.add_parser("list")
     sub.add_parser("json")
+    sub.add_parser("seed-users")
     args = parser.parse_args()
 
     if args.command == "add":
@@ -94,6 +113,8 @@ def main() -> None:
         list_users()
     elif args.command == "json":
         print_users_json()
+    elif args.command == "seed-users":
+        seed_users()
 
 
 if __name__ == "__main__":
