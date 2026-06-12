@@ -13,13 +13,13 @@ import requests
 from market_rules import analyze_index
 
 
-SNAPSHOT_SCHEMA_VERSION = 3
+SNAPSHOT_SCHEMA_VERSION = 4
 
 
 INDEXES = {
     "kospi200": {"name": "KOSPI 200", "ticker": "^KS200", "volume_ticker": "069500.KS", "ftd_min_gain_pct": 1.0, "currency": "KRW"},
     "kospi": {"name": "KOSPI", "ticker": "^KS11", "volume_ticker": "069500.KS", "ftd_min_gain_pct": 1.0, "currency": "KRW"},
-    "nasdaq100": {"name": "NASDAQ 100", "ticker": "^NDX", "volume_ticker": "QQQ", "ftd_min_gain_pct": 1.0, "currency": "USD"},
+    "nasdaq_composite": {"name": "나스닥종합", "ticker": "^IXIC", "volume_ticker": "QQQ", "ftd_min_gain_pct": 1.0, "currency": "USD"},
     "sp500": {"name": "S&P 500", "ticker": "^GSPC", "volume_ticker": "SPY", "ftd_min_gain_pct": 1.0, "currency": "USD"},
 }
 
@@ -121,11 +121,77 @@ def fetch_yahoo_chart(ticker: str) -> pd.DataFrame:
 
 
 def build_market_summary(results: dict[str, Any]) -> dict[str, Any]:
-    valid = [item for item in results.values() if not item.get("error")]
-    pressured = [item for item in valid if item["distribution_count"] >= 4 or item["distribution_clustered"]]
-    defensive = [item for item in valid if item["regime"] == "매도/방어"]
-    if len(defensive) >= 2 or len(pressured) >= 3:
-        return {"regime": "광범위한 매도 압력", "explanation": "여러 주요 지수에서 분산일 부담이 동시에 높습니다."}
-    if len(pressured) >= 2:
-        return {"regime": "시장 전반 주의", "explanation": "복수 지수에서 분산일이 누적되고 있습니다."}
-    return {"regime": "시장 전반 양호", "explanation": "주요 지수 전반의 분산일 부담이 제한적입니다."}
+    korea = build_region_summary(
+        [results.get("kospi200"), results.get("kospi")],
+        "한국",
+    )
+    united_states = build_region_summary(
+        [results.get("nasdaq_composite"), results.get("sp500")],
+        "미국",
+    )
+
+    region_regimes = {korea["regime"], united_states["regime"]}
+    if "매도/방어" in region_regimes:
+        regime = "시장 전반 방어 우선"
+        explanation = "한국 또는 미국 시장에서 방어 신호가 확인됩니다."
+    elif "주의" in region_regimes:
+        regime = "시장 전반 주의"
+        explanation = "한국 또는 미국 시장에서 확인이 필요한 신호가 있습니다."
+    else:
+        regime = "시장 전반 양호"
+        explanation = "한국과 미국 시장의 주요 지수 흐름이 모두 우호적입니다."
+
+    return {
+        "regime": regime,
+        "explanation": explanation,
+        "regions": {"korea": korea, "united_states": united_states},
+    }
+
+
+def build_region_summary(
+    items: list[dict[str, Any] | None],
+    region_name: str,
+) -> dict[str, Any]:
+    valid = [item for item in items if item and not item.get("error")]
+    if not valid:
+        return {
+            "name": region_name,
+            "regime": "데이터 오류",
+            "explanation": "시장 데이터를 확인할 수 없습니다.",
+            "has_valid_ftd": False,
+        }
+
+    has_valid_ftd = any(
+        item.get("follow_through") and item["follow_through"].get("is_active")
+        for item in valid
+    )
+    defensive_count = sum(item["regime"] == "매도/방어" for item in valid)
+    pressured_count = sum(
+        item["distribution_count"] >= 4 or item["distribution_clustered"]
+        for item in valid
+    )
+
+    if not has_valid_ftd or defensive_count >= 2:
+        regime = "매도/방어"
+        explanation = (
+            f"{region_name} 핵심 지수 중 유효 팔로우쓰루데이가 없거나 "
+            "양쪽 모두 방어 국면입니다."
+        )
+    elif defensive_count or pressured_count:
+        regime = "주의"
+        explanation = (
+            f"{region_name} 핵심 지수 중 하나 이상에서 분산일 또는 방어 신호가 있습니다."
+        )
+    else:
+        regime = "매수 우위"
+        explanation = (
+            f"{region_name} 핵심 지수 중 하나 이상에서 유효 팔로우쓰루데이가 확인되고 "
+            "분산일 부담이 제한적입니다."
+        )
+
+    return {
+        "name": region_name,
+        "regime": regime,
+        "explanation": explanation,
+        "has_valid_ftd": has_valid_ftd,
+    }

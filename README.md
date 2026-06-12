@@ -10,14 +10,14 @@ https://appapppy-cmks8kxu73qik7iqxaiux4.streamlit.app/
 
 - KOSPI 200
 - KOSPI
-- NASDAQ 100
+- NASDAQ Composite
 - S&P 500
 
 Daily price data comes from Yahoo Finance. ETF volume proxies are used for
 institutional-volume confirmation:
 
 - KOSPI / KOSPI 200: `069500.KS`
-- NASDAQ 100: `QQQ`
+- NASDAQ Composite: `QQQ`
 - S&P 500: `SPY`
 
 ## Signals
@@ -28,6 +28,8 @@ institutional-volume confirmation:
 - Distribution expiration after 25 sessions or a 5% index rally
 - Distribution clusters during the latest 11 sessions
 - Combined market-wide regime
+- Separate Korea and U.S. regime summaries
+- A valid follow-through day on either the Nasdaq Composite or S&P 500 can confirm the U.S. rally
 
 ## Run Locally
 

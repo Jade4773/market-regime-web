@@ -195,6 +195,16 @@ def render_market_dashboard() -> None:
     summary = snapshot["market_summary"]
     st.subheader(summary["regime"])
     st.info(summary["explanation"])
+    region_cols = st.columns(2)
+    for col, key in zip(region_cols, ["korea", "united_states"]):
+        region = summary["regions"][key]
+        with col:
+            st.metric(f"{region['name']} 시장", region["regime"])
+            st.caption(region["explanation"])
+            st.caption(
+                "유효 팔로우쓰루데이: "
+                + ("확인" if region["has_valid_ftd"] else "미확인")
+            )
     with st.expander("분산일 판정 기준"):
         st.markdown(
             """
@@ -211,6 +221,7 @@ def render_market_dashboard() -> None:
             - **랠리 첫날:** 지수가 전일보다 상승 마감하거나 일중 범위 상단 절반에서 마감
             - **카운트 재시작:** 이후 지수가 랠리 첫날 저가를 하향 돌파
             - **팔로우쓰루데이:** 랠리 4일차 이후 지수가 최소 1% 상승하고 ETF 대체 거래량 증가
+            - **미국시장 확인:** 나스닥종합 또는 S&P 500 중 하나에서 유효 팔로우쓰루데이가 발생하면 인정
             - **품질 양호:** 통상적인 4~7일차에 확인
             - **늦은 확인:** 8일차 이후 확인
             - **품질 주의:** 확인 후 5거래일 내 분산일 발생
