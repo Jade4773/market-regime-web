@@ -34,6 +34,17 @@ def badge_style(regime: str) -> str:
     return "background:#fae4e4;color:#a73535;"
 
 
+def card_explanation(item: dict[str, Any]) -> str:
+    follow_through = item.get("follow_through")
+    if follow_through and follow_through.get("quality") == "주의":
+        count = follow_through.get("early_distribution_count", 0)
+        return (
+            f"팔로우쓰루데이 후 5거래일 내 분산일이 {count}회 발생해 "
+            "신호를 보수적으로 봅니다."
+        )
+    return item["explanation"]
+
+
 def render_market_card(item: dict[str, Any]) -> None:
     if item.get("error"):
         st.subheader(item["name"])
@@ -55,7 +66,7 @@ def render_market_card(item: dict[str, Any]) -> None:
             <span class="{'up' if item["change_pct"] >= 0 else 'down'}">{format_pct(item["change_pct"])}</span>
           </div>
           <div class="meter"><span style="width:{item["score"]}%"></span></div>
-          <p class="explain">{item["explanation"]}</p>
+          <p class="explain">{card_explanation(item)}</p>
         </div>
         """,
         unsafe_allow_html=True,
