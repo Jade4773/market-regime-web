@@ -30,8 +30,8 @@ def badge_style(regime: str) -> str:
     if regime == "매수 우위":
         return "background:#e8f3ff;color:#1b64da;"
     if regime == "주의":
-        return "background:#edf4ff;color:#35659b;"
-    return "background:#e5efff;color:#174ea6;"
+        return "background:#fff0f0;color:#e5484d;"
+    return "background:#ffe8e8;color:#d92d35;"
 
 
 def regime_tone(regime: str) -> str:
@@ -187,7 +187,8 @@ def dashboard() -> None:
         }
         .summary-label { color: #dbeaff; font-size: 13px; font-weight: 700; margin-bottom: 8px; }
         .summary-title { font-size: 26px; font-weight: 800; margin-bottom: 8px; }
-        .summary-title.positive, .summary-title.caution, .summary-title.negative { color: #ffffff; }
+        .summary-title.positive { color: #ffffff; }
+        .summary-title.caution, .summary-title.negative { color: #ffd2d4; }
         .summary-copy { color: #eaf3ff; font-size: 15px; margin: 0; }
         .region-card {
             min-height: 142px;
@@ -201,6 +202,7 @@ def dashboard() -> None:
         .region-top { display:flex; justify-content:space-between; gap:12px; align-items:center; }
         .region-name { color:#6f87a8; font-size:14px; font-weight:700; }
         .region-regime { color:#172b4d; font-size:22px; font-weight:800; margin:10px 0 7px; }
+        .region-regime.caution, .region-regime.negative { color:#d92d35; }
         .region-copy { color:#8295b1; font-size:13px; line-height:1.55; margin:0; }
         .section-title { font-size: 20px; font-weight: 800; margin: 26px 0 14px; }
         .market-card {
@@ -299,7 +301,7 @@ def render_market_dashboard() -> None:
                     <span class="region-name">{region['name']} 시장</span>
                     <span class="regime-badge" style="{badge_style(region['regime'])}">{ftd_status}</span>
                   </div>
-                  <div class="region-regime">{region['regime']}</div>
+                  <div class="region-regime {regime_tone(region['regime'])}">{region['regime']}</div>
                   <p class="region-copy">{region['explanation']}</p>
                 </div>
                 """,
