@@ -60,6 +60,8 @@ def analyze_index(meta: dict[str, str], history: pd.DataFrame) -> dict[str, Any]
         close_above_ma50=bool(df.iloc[-1]["close_above_ma50"]),
         close_above_ma200=bool(df.iloc[-1]["close_above_ma200"]),
     )
+    if follow_through and follow_through["quality"] in {"주의", "늦은 확인", "실패"}:
+        explanation = follow_through["quality_reason"]
 
     latest = df.iloc[-1]
     previous = df.iloc[-2]
@@ -171,7 +173,7 @@ def find_follow_through(
                 quality = "주의"
                 quality_reason = (
                     f"팔로우쓰루데이 후 {SETTINGS.ftd_early_distribution_window}거래일 내 "
-                    f"분산일이 {early_distribution_count}회 발생했습니다."
+                    f"분산일이 {early_distribution_count}회 발생해 신호를 보수적으로 봅니다."
                 )
             elif day_number > SETTINGS.ftd_ideal_last_day:
                 quality = "늦은 확인"
@@ -277,10 +279,12 @@ def classify_regime(
         score += 20
     score -= min(distribution_count * 8, 48)
 
-    if not has_ftd or ftd_quality == "실패" or distribution_count >= SETTINGS.distribution_sell_count:
-        return "매도/방어", max(score, 0), "팔로우쓰루데이가 없거나 분산일 부담이 큽니다."
+    if not has_ftd or ftd_quality == "실패":
+        return "매도/방어", max(score, 0), "현재 유효한 팔로우쓰루데이가 확인되지 않습니다."
+    if distribution_count >= SETTINGS.distribution_sell_count:
+        return "매도/방어", max(score, 0), f"활성 분산 신호가 {distribution_count}회로 매도 압력이 큽니다."
     if ftd_quality in {"주의", "늦은 확인"}:
-        return "주의", max(score, 0), "팔로우쓰루데이 품질을 추가로 확인해야 합니다."
+        return "주의", max(score, 0), "팔로우쓰루데이 신호를 보수적으로 확인해야 합니다."
     if distribution_clustered:
         return "주의", max(score, 0), "최근 11거래일에 분산일이 집중되어 있습니다."
     if distribution_count >= SETTINGS.distribution_warning_count or not close_above_ma50:
