@@ -28,10 +28,10 @@ def format_pct(value: float | None) -> str:
 
 def badge_style(regime: str) -> str:
     if regime == "매수 우위":
-        return "background:#e8f8f0;color:#008a5a;"
+        return "background:#e8f3ff;color:#1b64da;"
     if regime == "주의":
-        return "background:#fff6df;color:#b76e00;"
-    return "background:#fff0f0;color:#e5484d;"
+        return "background:#edf4ff;color:#35659b;"
+    return "background:#e5efff;color:#174ea6;"
 
 
 def regime_tone(regime: str) -> str:
@@ -170,47 +170,46 @@ def dashboard() -> None:
         """
         <style>
         :root { color-scheme: light; }
-        .stApp { background: #f7f8fa; color: #191f28; }
+        .stApp { background: #f3f7fd; color: #172b4d; }
         .block-container { max-width: 1120px; padding-top: 38px; padding-bottom: 72px; }
         h1, h2, h3, p { letter-spacing: 0; }
         h1 { font-size: 34px !important; line-height: 1.25 !important; margin-bottom: 8px !important; }
         [data-testid="stCaptionContainer"] { color: #8b95a1; }
         .page-kicker { color: #3182f6; font-size: 14px; font-weight: 700; margin-bottom: 8px; }
-        .page-subtitle { color: #6b7684; font-size: 16px; margin: 0 0 28px; }
+        .page-subtitle { color: #6f87a8; font-size: 16px; margin: 0 0 28px; }
         .summary-card {
-            background: #ffffff;
-            border: 1px solid #eef0f3;
+            background: #3182f6;
+            border: 1px solid #3182f6;
             border-radius: 8px;
             padding: 24px;
             margin: 2px 0 24px;
-            box-shadow: 0 1px 2px rgba(0,0,0,.02);
+            box-shadow: 0 8px 24px rgba(49,130,246,.14);
         }
-        .summary-label { color: #8b95a1; font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+        .summary-label { color: #dbeaff; font-size: 13px; font-weight: 700; margin-bottom: 8px; }
         .summary-title { font-size: 26px; font-weight: 800; margin-bottom: 8px; }
-        .summary-title.positive { color: #008a5a; }
-        .summary-title.caution { color: #b76e00; }
-        .summary-title.negative { color: #e5484d; }
-        .summary-copy { color: #6b7684; font-size: 15px; margin: 0; }
+        .summary-title.positive, .summary-title.caution, .summary-title.negative { color: #ffffff; }
+        .summary-copy { color: #eaf3ff; font-size: 15px; margin: 0; }
         .region-card {
             min-height: 142px;
             background: #ffffff;
-            border: 1px solid #eef0f3;
+            border: 1px solid #e2ebf7;
             border-radius: 8px;
             padding: 20px;
             margin-bottom: 22px;
+            box-shadow: 0 2px 10px rgba(35,76,126,.04);
         }
         .region-top { display:flex; justify-content:space-between; gap:12px; align-items:center; }
-        .region-name { color:#6b7684; font-size:14px; font-weight:700; }
-        .region-regime { font-size:22px; font-weight:800; margin:10px 0 7px; }
-        .region-copy { color:#8b95a1; font-size:13px; line-height:1.55; margin:0; }
+        .region-name { color:#6f87a8; font-size:14px; font-weight:700; }
+        .region-regime { color:#172b4d; font-size:22px; font-weight:800; margin:10px 0 7px; }
+        .region-copy { color:#8295b1; font-size:13px; line-height:1.55; margin:0; }
         .section-title { font-size: 20px; font-weight: 800; margin: 26px 0 14px; }
         .market-card {
-            border: 1px solid #eef0f3;
+            border: 1px solid #e2ebf7;
             border-radius: 8px;
             padding: 22px;
             background: #ffffff;
             margin-bottom: 10px;
-            box-shadow: 0 1px 2px rgba(0,0,0,.02);
+            box-shadow: 0 2px 10px rgba(35,76,126,.04);
         }
         .card-head, .price-row {
             display: flex;
@@ -218,9 +217,9 @@ def dashboard() -> None:
             gap: 14px;
             align-items: flex-start;
         }
-        .card-head h3 { margin: 0 0 4px; font-size: 20px; color:#191f28; }
-        .card-head p { color: #8b95a1; margin: 0; font-size:13px; }
-        .explain { color:#6b7684; margin:12px 0 0; font-size:14px; line-height:1.55; min-height:44px; }
+        .card-head h3 { margin: 0 0 4px; font-size: 20px; color:#172b4d; }
+        .card-head p { color: #8ba0bc; margin: 0; font-size:13px; }
+        .explain { color:#6f87a8; margin:12px 0 0; font-size:14px; line-height:1.55; min-height:44px; }
         .regime-badge {
             border-radius: 999px;
             padding: 6px 10px;
@@ -229,26 +228,26 @@ def dashboard() -> None:
             white-space: nowrap;
         }
         .price-row { align-items: baseline; margin-top: 22px; }
-        .price-row strong { font-size: 32px; line-height: 1; color:#191f28; }
+        .price-row strong { font-size: 32px; line-height: 1; color:#172b4d; }
         .up { color: #3182f6; font-weight: 800; }
         .down { color: #e5484d; font-weight: 800; }
         .signal-row { display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center; margin-top:18px; }
-        .signal-row > span { color:#8b95a1; font-size:12px; }
-        .signal-row > strong { color:#4e5968; font-size:12px; }
+        .signal-row > span { color:#8ba0bc; font-size:12px; }
+        .signal-row > strong { color:#4d6f9d; font-size:12px; }
         .meter {
             height: 5px;
-            background: #eef0f3;
+            background: #e8eef7;
             border-radius: 999px;
             overflow: hidden;
         }
         .meter span { display: block; height: 100%; background: #3182f6; border-radius:999px; }
-        .stat-grid { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:1px; background:#eef0f3; margin-top:18px; }
+        .stat-grid { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:1px; background:#e5edf8; margin-top:18px; }
         .stat-grid > div { background:#fff; padding:14px 10px 10px 0; min-width:0; }
-        .stat-grid span, .ftd-line span { display:block; color:#8b95a1; font-size:12px; margin-bottom:5px; }
-        .stat-grid strong { display:block; color:#333d4b; font-size:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .ftd-line { background:#f7f8fa; border-radius:8px; padding:13px 14px; margin-top:16px; }
-        .ftd-line strong { color:#4e5968; font-size:13px; font-weight:700; }
-        div[data-testid="stExpander"] { background:#fff; border-color:#eef0f3; border-radius:8px; }
+        .stat-grid span, .ftd-line span { display:block; color:#8ba0bc; font-size:12px; margin-bottom:5px; }
+        .stat-grid strong { display:block; color:#28466f; font-size:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .ftd-line { background:#f0f6ff; border-radius:8px; padding:13px 14px; margin-top:16px; }
+        .ftd-line strong { color:#416b9f; font-size:13px; font-weight:700; }
+        div[data-testid="stExpander"] { background:#fff; border-color:#e2ebf7; border-radius:8px; }
         div[data-testid="stAlert"] { border-radius:8px; }
         @media (max-width: 700px) {
             .block-container { padding: 24px 16px 56px; }
