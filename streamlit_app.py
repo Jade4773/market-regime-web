@@ -7,6 +7,14 @@ import streamlit as st
 from market_data import get_market_snapshot
 
 
+TAB_LABELS = {
+    "overview": "개요",
+    "oneil": "윌리엄 오닐",
+    "trend": "추세/모멘텀",
+    "risk": "리스크 점검",
+}
+
+
 st.set_page_config(
     page_title="Market Regime",
     layout="wide",
@@ -198,9 +206,9 @@ def render_consensus_card(item: dict[str, Any]) -> None:
             <strong>{consensus["score"]}</strong>
           </div>
           <div class="opinion-list">
-            <div><span>윌리엄 오닐</span><strong class="{regime_tone(signals["oneil"]["opinion"])}">{signals["oneil"]["opinion"]}</strong></div>
-            <div><span>추세/모멘텀</span><strong class="{regime_tone(signals["trend"]["opinion"])}">{signals["trend"]["opinion"]}</strong></div>
-            <div><span>리스크 점검</span><strong class="{regime_tone(signals["risk"]["opinion"])}">{signals["risk"]["opinion"]}</strong></div>
+            <a href="?tab=oneil"><span>윌리엄 오닐</span><strong class="{regime_tone(signals["oneil"]["opinion"])}">{signals["oneil"]["opinion"]}</strong></a>
+            <a href="?tab=trend"><span>추세/모멘텀</span><strong class="{regime_tone(signals["trend"]["opinion"])}">{signals["trend"]["opinion"]}</strong></a>
+            <a href="?tab=risk"><span>리스크 점검</span><strong class="{regime_tone(signals["risk"]["opinion"])}">{signals["risk"]["opinion"]}</strong></a>
           </div>
         </div>
         """,
@@ -282,6 +290,41 @@ def dashboard() -> None:
         .summary-title.neutral { color: #eaf3ff; }
         .summary-title.caution, .summary-title.negative { color: #ffd2d4; }
         .summary-copy { color: #eaf3ff; font-size: 15px; margin: 0; }
+        .tab-menu {
+            display:flex;
+            flex-wrap:wrap;
+            gap:8px;
+            margin: 0 0 20px;
+            padding: 6px;
+            width: fit-content;
+            max-width: 100%;
+            background:#eaf3ff;
+            border:1px solid #d7e8ff;
+            border-radius:999px;
+        }
+        .tab-menu a {
+            display:inline-flex;
+            align-items:center;
+            justify-content:center;
+            min-height:36px;
+            padding: 0 16px;
+            border-radius:999px;
+            color:#416b9f;
+            font-size:14px;
+            font-weight:800;
+            text-decoration:none;
+            white-space:nowrap;
+            transition: background .15s ease, color .15s ease, box-shadow .15s ease;
+        }
+        .tab-menu a:hover {
+            background:#dbeaff;
+            color:#1b64da;
+        }
+        .tab-menu a.active {
+            background:#3182f6;
+            color:#ffffff;
+            box-shadow:0 5px 16px rgba(49,130,246,.22);
+        }
         .region-card {
             min-height: 142px;
             background: #ffffff;
@@ -342,14 +385,22 @@ def dashboard() -> None:
         .stat-grid strong { display:block; color:#28466f; font-size:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .ftd-line { background:#f0f6ff; border-radius:8px; padding:13px 14px; margin-top:16px; }
         .ftd-line strong { color:#416b9f; font-size:13px; font-weight:700; }
-        .opinion-list { display:grid; gap:10px; margin-top:18px; }
-        .opinion-list > div {
+        .opinion-list { display:grid; gap:0; margin-top:18px; }
+        .opinion-list a {
             display:flex;
             justify-content:space-between;
             align-items:center;
             gap:12px;
-            padding:12px 0;
+            padding:13px 8px;
             border-top:1px solid #e5edf8;
+            border-radius:8px;
+            color:inherit;
+            text-decoration:none;
+            cursor:pointer;
+            transition: background .15s ease;
+        }
+        .opinion-list a:hover {
+            background:#f0f6ff;
         }
         .opinion-list span { color:#8ba0bc; font-size:13px; }
         .opinion-list strong { color:#172b4d; font-size:14px; }
@@ -366,6 +417,8 @@ def dashboard() -> None:
             .region-card { min-height:0; }
             .market-card { padding:18px; }
             .price-row strong { font-size:29px; }
+            .tab-menu { width:100%; border-radius:16px; }
+            .tab-menu a { flex:1 1 45%; }
         }
         </style>
         """,
@@ -388,23 +441,37 @@ def render_market_dashboard() -> None:
     items = list(snapshot["items"].values())
     valid_items = [item for item in items if not item.get("error")]
     overview = build_overview(valid_items)
-    overview_tab, oneil_tab, trend_tab, risk_tab = st.tabs(
-        ["개요", "윌리엄 오닐", "추세/모멘텀", "리스크 점검"]
-    )
+    active_tab = get_active_tab()
+    render_tab_menu(active_tab)
 
-    with overview_tab:
+    if active_tab == "overview":
         render_overview_tab(valid_items, overview)
-
-    with oneil_tab:
+    elif active_tab == "oneil":
         render_oneil_tab(snapshot)
-
-    with trend_tab:
+    elif active_tab == "trend":
         render_signal_tab(items, "trend", "추세/모멘텀")
-
-    with risk_tab:
+    elif active_tab == "risk":
         render_signal_tab(items, "risk", "리스크 점검")
 
     st.caption(f"데이터는 최대 {snapshot['cache_seconds']}초 동안 캐시됩니다.")
+
+
+def get_active_tab() -> str:
+    tab = st.query_params.get("tab", "overview")
+    if isinstance(tab, list):
+        tab = tab[0] if tab else "overview"
+    return tab if tab in TAB_LABELS else "overview"
+
+
+def render_tab_menu(active_tab: str) -> None:
+    links = []
+    for key, label in TAB_LABELS.items():
+        active_class = " active" if key == active_tab else ""
+        links.append(f'<a class="tab-link{active_class}" href="?tab={key}">{label}</a>')
+    st.markdown(
+        f'<nav class="tab-menu" aria-label="시그널 메뉴">{"".join(links)}</nav>',
+        unsafe_allow_html=True,
+    )
 
 
 def build_overview(items: list[dict[str, Any]]) -> dict[str, Any]:
