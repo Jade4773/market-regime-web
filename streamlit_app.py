@@ -27,17 +27,21 @@ def format_pct(value: float | None) -> str:
 
 
 def badge_style(regime: str) -> str:
-    if regime == "매수 우위":
+    if "매수" in regime:
         return "background:#e8f3ff;color:#1b64da;"
-    if regime == "주의":
+    if "중립" in regime or "관망" in regime:
+        return "background:#eef4fb;color:#4d6f9d;"
+    if "주의" in regime:
         return "background:#fff0f0;color:#e5484d;"
     return "background:#ffe8e8;color:#d92d35;"
 
 
 def regime_tone(regime: str) -> str:
-    if regime == "매수 우위":
+    if "매수" in regime:
         return "positive"
-    if regime == "주의":
+    if "중립" in regime or "관망" in regime:
+        return "neutral"
+    if "주의" in regime:
         return "caution"
     return "negative"
 
@@ -165,6 +169,93 @@ def render_market_card(item: dict[str, Any]) -> None:
             )
 
 
+def render_consensus_card(item: dict[str, Any]) -> None:
+    if item.get("error"):
+        st.subheader(item["name"])
+        st.error(item["error"])
+        return
+
+    consensus = item["consensus"]
+    signals = item["signals"]
+    st.markdown(
+        f"""
+        <div class="market-card">
+          <div class="card-head">
+            <div>
+              <h3>{item["name"]}</h3>
+              <p>{item["ticker"]} · {item["last_date"]}</p>
+            </div>
+            <span class="regime-badge" style="{badge_style(consensus["opinion"])}">{consensus["opinion"]}</span>
+          </div>
+          <div class="price-row">
+            <strong>{format_number(item["close"])}</strong>
+            <span class="{'up' if item["change_pct"] >= 0 else 'down'}">{format_pct(item["change_pct"])}</span>
+          </div>
+          <p class="explain">{consensus["explanation"]}</p>
+          <div class="signal-row">
+            <span>종합 점수</span>
+            <div class="meter"><span style="width:{consensus["score"]}%"></span></div>
+            <strong>{consensus["score"]}</strong>
+          </div>
+          <div class="opinion-list">
+            <div><span>윌리엄 오닐</span><strong class="{regime_tone(signals["oneil"]["opinion"])}">{signals["oneil"]["opinion"]}</strong></div>
+            <div><span>추세/모멘텀</span><strong class="{regime_tone(signals["trend"]["opinion"])}">{signals["trend"]["opinion"]}</strong></div>
+            <div><span>리스크 점검</span><strong class="{regime_tone(signals["risk"]["opinion"])}">{signals["risk"]["opinion"]}</strong></div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_signal_card(item: dict[str, Any], signal_key: str) -> None:
+    if item.get("error"):
+        st.subheader(item["name"])
+        st.error(item["error"])
+        return
+
+    signal = item["signals"][signal_key]
+    metrics = signal.get("metrics", {})
+    details = signal.get("details", [])
+    st.markdown(
+        f"""
+        <div class="market-card">
+          <div class="card-head">
+            <div>
+              <h3>{item["name"]}</h3>
+              <p>{signal["name"]}</p>
+            </div>
+            <span class="regime-badge" style="{badge_style(signal["opinion"])}">{signal["opinion"]}</span>
+          </div>
+          <p class="explain">{signal["explanation"]}</p>
+          <div class="signal-row">
+            <span>관점 점수</span>
+            <div class="meter"><span style="width:{signal["score"]}%"></span></div>
+            <strong>{signal["score"]}</strong>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption(" · ".join(details))
+    if metrics:
+        st.dataframe(
+            [
+                {
+                    "지표": name,
+                    "값": format_pct(value)
+                    if "수익률" in name or "이격도" in name
+                    else format_number(value)
+                    if isinstance(value, (int, float))
+                    else value,
+                }
+                for name, value in metrics.items()
+            ],
+            hide_index=True,
+            use_container_width=True,
+        )
+
+
 def dashboard() -> None:
     st.markdown(
         """
@@ -188,6 +279,7 @@ def dashboard() -> None:
         .summary-label { color: #dbeaff; font-size: 13px; font-weight: 700; margin-bottom: 8px; }
         .summary-title { font-size: 26px; font-weight: 800; margin-bottom: 8px; }
         .summary-title.positive { color: #ffffff; }
+        .summary-title.neutral { color: #eaf3ff; }
         .summary-title.caution, .summary-title.negative { color: #ffd2d4; }
         .summary-copy { color: #eaf3ff; font-size: 15px; margin: 0; }
         .region-card {
@@ -202,6 +294,7 @@ def dashboard() -> None:
         .region-top { display:flex; justify-content:space-between; gap:12px; align-items:center; }
         .region-name { color:#6f87a8; font-size:14px; font-weight:700; }
         .region-regime { color:#172b4d; font-size:22px; font-weight:800; margin:10px 0 7px; }
+        .region-regime.neutral { color:#4d6f9d; }
         .region-regime.caution, .region-regime.negative { color:#d92d35; }
         .region-copy { color:#8295b1; font-size:13px; line-height:1.55; margin:0; }
         .section-title { font-size: 20px; font-weight: 800; margin: 26px 0 14px; }
@@ -249,6 +342,20 @@ def dashboard() -> None:
         .stat-grid strong { display:block; color:#28466f; font-size:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .ftd-line { background:#f0f6ff; border-radius:8px; padding:13px 14px; margin-top:16px; }
         .ftd-line strong { color:#416b9f; font-size:13px; font-weight:700; }
+        .opinion-list { display:grid; gap:10px; margin-top:18px; }
+        .opinion-list > div {
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+            gap:12px;
+            padding:12px 0;
+            border-top:1px solid #e5edf8;
+        }
+        .opinion-list span { color:#8ba0bc; font-size:13px; }
+        .opinion-list strong { color:#172b4d; font-size:14px; }
+        .opinion-list strong.positive { color:#1b64da; }
+        .opinion-list strong.neutral { color:#4d6f9d; }
+        .opinion-list strong.caution, .opinion-list strong.negative { color:#d92d35; }
         div[data-testid="stExpander"] { background:#fff; border-color:#e2ebf7; border-radius:8px; }
         div[data-testid="stAlert"] { border-radius:8px; }
         @media (max-width: 700px) {
@@ -278,17 +385,98 @@ def render_market_dashboard() -> None:
     with st.spinner("야후 파이낸스에서 데이터를 가져오는 중입니다."):
         snapshot = get_market_snapshot()
 
+    items = list(snapshot["items"].values())
+    valid_items = [item for item in items if not item.get("error")]
+    overview = build_overview(valid_items)
+    overview_tab, oneil_tab, trend_tab, risk_tab = st.tabs(
+        ["개요", "윌리엄 오닐", "추세/모멘텀", "리스크 점검"]
+    )
+
+    with overview_tab:
+        render_overview_tab(valid_items, overview)
+
+    with oneil_tab:
+        render_oneil_tab(snapshot)
+
+    with trend_tab:
+        render_signal_tab(items, "trend", "추세/모멘텀")
+
+    with risk_tab:
+        render_signal_tab(items, "risk", "리스크 점검")
+
+    st.caption(f"데이터는 최대 {snapshot['cache_seconds']}초 동안 캐시됩니다.")
+
+
+def build_overview(items: list[dict[str, Any]]) -> dict[str, Any]:
+    if not items:
+        return {
+            "opinion": "데이터 오류",
+            "score": 0,
+            "explanation": "시장 데이터를 확인할 수 없습니다.",
+        }
+
+    average = round(sum(item["consensus"]["score"] for item in items) / len(items))
+    defensive_count = sum(item["consensus"]["opinion"] == "매도/방어" for item in items)
+    buy_count = sum(item["consensus"]["opinion"] == "매수 우위" for item in items)
+
+    if defensive_count >= 2 or average < 45:
+        opinion = "시장 전반 방어 우선"
+        explanation = "여러 지수의 종합 의견에서 방어 신호가 우세합니다."
+    elif buy_count >= 3 and average >= 65:
+        opinion = "시장 전반 매수 우위"
+        explanation = "대부분 지수에서 매수 우위 의견이 확인됩니다."
+    else:
+        opinion = "시장 전반 중립/관망"
+        explanation = "지수와 관점별 의견이 엇갈려 확인이 더 필요합니다."
+
+    return {"opinion": opinion, "score": average, "explanation": explanation}
+
+
+def render_overview_tab(items: list[dict[str, Any]], overview: dict[str, Any]) -> None:
+    st.markdown(
+        f"""
+        <div class="summary-card">
+          <div class="summary-label">오늘의 종합 판단</div>
+          <div class="summary-title {regime_tone(overview['opinion'])}">{overview["opinion"]}</div>
+          <p class="summary-copy">{overview["explanation"]}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    for row_start in range(0, len(items), 2):
+        cols = st.columns(2)
+        for col, item in zip(cols, items[row_start : row_start + 2]):
+            with col:
+                render_consensus_card(item)
+
+
+def render_oneil_tab(snapshot: dict[str, Any]) -> None:
     summary = snapshot["market_summary"]
     st.markdown(
         f"""
         <div class="summary-card">
-          <div class="summary-label">오늘의 시장 판단</div>
+          <div class="summary-label">윌리엄 오닐 관점</div>
           <div class="summary-title {regime_tone(summary['regime'])}">{summary["regime"]}</div>
           <p class="summary-copy">{summary["explanation"]}</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    render_region_summary(summary)
+    items = list(snapshot["items"].values())
+    for row_start in range(0, len(items), 2):
+        section_name = "한국 시장" if row_start == 0 else "미국 시장"
+        st.markdown(f'<div class="section-title">{section_name}</div>', unsafe_allow_html=True)
+        cols = st.columns(2)
+        for col, item in zip(cols, items[row_start : row_start + 2]):
+            with col:
+                render_market_card(item)
+
+    render_oneil_rules()
+
+
+def render_region_summary(summary: dict[str, Any]) -> None:
     region_cols = st.columns(2)
     for col, key in zip(region_cols, ["korea", "united_states"]):
         region = summary["regions"][key]
@@ -307,15 +495,36 @@ def render_market_dashboard() -> None:
                 """,
                 unsafe_allow_html=True,
             )
-    items = list(snapshot["items"].values())
+
+
+def render_signal_tab(items: list[dict[str, Any]], signal_key: str, title: str) -> None:
+    st.markdown(f'<div class="section-title">{title}</div>', unsafe_allow_html=True)
     for row_start in range(0, len(items), 2):
-        section_name = "한국 시장" if row_start == 0 else "미국 시장"
-        st.markdown(f'<div class="section-title">{section_name}</div>', unsafe_allow_html=True)
         cols = st.columns(2)
         for col, item in zip(cols, items[row_start : row_start + 2]):
             with col:
-                render_market_card(item)
+                render_signal_card(item, signal_key)
 
+    with st.expander(f"{title} 판정 기준"):
+        if signal_key == "trend":
+            st.markdown(
+                """
+                - **20일선·50일선:** 현재 가격이 주요 이동평균 위에 있으면 우호적으로 봅니다.
+                - **50일선과 200일선:** 50일선이 200일선보다 높으면 중기 상승 추세로 봅니다.
+                - **20·60거래일 수익률:** 최근 상승 탄력이 살아 있는지 확인합니다.
+                """
+            )
+        else:
+            st.markdown(
+                """
+                - **RSI 14:** 40~70은 안정, 75 이상은 단기 과열로 봅니다.
+                - **50일선 이격도:** 50일선 대비 지나치게 멀어지면 추격 매수 부담으로 봅니다.
+                - **분산일:** 분산일 누적과 집중 여부를 리스크 요인으로 반영합니다.
+                """
+            )
+
+
+def render_oneil_rules() -> None:
     st.markdown('<div class="section-title">판정 기준</div>', unsafe_allow_html=True)
     with st.expander("분산일 판정 기준"):
         st.markdown(
@@ -344,8 +553,6 @@ def render_market_dashboard() -> None:
             - **신호 평가 - 실패:** 발생 후 랠리 첫날 저가를 깨서 상승 시도가 무효화됨
             """
         )
-
-    st.caption(f"데이터는 최대 {snapshot['cache_seconds']}초 동안 캐시됩니다.")
 
 
 def main() -> None:

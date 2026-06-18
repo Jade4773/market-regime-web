@@ -65,6 +65,20 @@ def analyze_index(meta: dict[str, str], history: pd.DataFrame) -> dict[str, Any]
 
     latest = df.iloc[-1]
     previous = df.iloc[-2]
+    trend_signal = analyze_trend_signal(df)
+    risk_signal = analyze_risk_signal(df, active_count, distribution_clustered)
+    oneil_signal = {
+        "name": "윌리엄 오닐",
+        "opinion": regime,
+        "score": score,
+        "explanation": explanation,
+    }
+    signals = {
+        "oneil": oneil_signal,
+        "trend": trend_signal,
+        "risk": risk_signal,
+    }
+    consensus = build_consensus(signals)
     return {
         "name": meta["name"],
         "ticker": meta["ticker"],
@@ -91,6 +105,8 @@ def analyze_index(meta: dict[str, str], history: pd.DataFrame) -> dict[str, Any]
         "expired_distribution_days": [
             item for item in distribution_days if not item["is_active"]
         ][-8:],
+        "signals": signals,
+        "consensus": consensus,
     }
 
 
@@ -100,9 +116,165 @@ def prepare(history: pd.DataFrame) -> pd.DataFrame:
     df["volume_up"] = df["Volume"] > df["Volume"].shift(1)
     df["ma50"] = df["Close"].rolling(50).mean()
     df["ma200"] = df["Close"].rolling(200).mean()
+    df["ma20"] = df["Close"].rolling(20).mean()
+    delta = df["Close"].diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = -delta.clip(upper=0).rolling(14).mean()
+    rs = gain / loss
+    df["rsi14"] = 100 - (100 / (1 + rs))
+    df["return20"] = df["Close"].pct_change(20) * 100
+    df["return60"] = df["Close"].pct_change(60) * 100
     df["close_above_ma50"] = df["Close"] > df["ma50"]
     df["close_above_ma200"] = df["Close"] > df["ma200"]
     return df
+
+
+def analyze_trend_signal(df: pd.DataFrame) -> dict[str, Any]:
+    latest = df.iloc[-1]
+    close = float(latest["Close"])
+    ma20 = float(latest["ma20"]) if pd.notna(latest["ma20"]) else None
+    ma50 = float(latest["ma50"]) if pd.notna(latest["ma50"]) else None
+    ma200 = float(latest["ma200"]) if pd.notna(latest["ma200"]) else None
+    return20 = float(latest["return20"]) if pd.notna(latest["return20"]) else 0.0
+    return60 = float(latest["return60"]) if pd.notna(latest["return60"]) else 0.0
+
+    score = 0
+    reasons = []
+    if ma20 and close > ma20:
+        score += 20
+        reasons.append("20일선 위")
+    if ma50 and close > ma50:
+        score += 25
+        reasons.append("50일선 위")
+    if ma50 and ma200 and ma50 > ma200:
+        score += 25
+        reasons.append("50일선이 200일선 위")
+    if return20 > 0:
+        score += 15
+        reasons.append("20거래일 수익률 양호")
+    if return60 > 0:
+        score += 15
+        reasons.append("60거래일 수익률 양호")
+
+    opinion = opinion_from_score(score)
+    if opinion == "매수 우위":
+        explanation = "중기 추세와 최근 모멘텀이 대체로 우호적입니다."
+    elif opinion == "중립/관망":
+        explanation = "추세 조건이 엇갈려 방향 확인이 필요합니다."
+    else:
+        explanation = "주요 이동평균 또는 최근 모멘텀이 약합니다."
+
+    return {
+        "name": "추세/모멘텀",
+        "opinion": opinion,
+        "score": score,
+        "explanation": explanation,
+        "details": reasons or ["확인 가능한 우호 조건이 제한적"],
+        "metrics": {
+            "20일 수익률": return20,
+            "60일 수익률": return60,
+            "20일선": ma20,
+            "50일선": ma50,
+            "200일선": ma200,
+        },
+    }
+
+
+def analyze_risk_signal(
+    df: pd.DataFrame, distribution_count: int, distribution_clustered: bool
+) -> dict[str, Any]:
+    latest = df.iloc[-1]
+    close = float(latest["Close"])
+    ma50 = float(latest["ma50"]) if pd.notna(latest["ma50"]) else None
+    rsi = float(latest["rsi14"]) if pd.notna(latest["rsi14"]) else None
+    distance_ma50 = _pct(close, ma50) if ma50 else 0.0
+
+    score = 60
+    details = []
+    if ma50 and close > ma50:
+        score += 15
+        details.append("50일선 위에서 유지")
+    else:
+        score -= 20
+        details.append("50일선 아래 또는 근접")
+    if rsi is not None:
+        if 40 <= rsi <= 70:
+            score += 15
+            details.append("RSI가 과열·침체 구간 밖")
+        elif rsi > 75:
+            score -= 20
+            details.append("RSI 과열권")
+        elif rsi < 35:
+            score -= 15
+            details.append("RSI 침체권")
+    if distance_ma50 > 12:
+        score -= 30
+        details.append("50일선 대비 단기 과열")
+    if distance_ma50 > 20:
+        score -= 15
+        details.append("50일선 대비 이격도 매우 큼")
+    if distribution_count >= SETTINGS.distribution_warning_count:
+        score -= 20
+        details.append("분산일 누적")
+    if distribution_clustered:
+        score -= 15
+        details.append("최근 분산일 집중")
+
+    score = max(0, min(score, 100))
+    opinion = opinion_from_score(score)
+    if opinion == "매수 우위":
+        explanation = "과열과 매도 압력 부담이 제한적입니다."
+    elif opinion == "중립/관망":
+        explanation = "일부 부담 요인이 있어 무리한 추격은 피하는 구간입니다."
+    else:
+        explanation = "과열, 추세 이탈, 분산일 부담 중 하나 이상이 큽니다."
+
+    return {
+        "name": "리스크 점검",
+        "opinion": opinion,
+        "score": score,
+        "explanation": explanation,
+        "details": details or ["특별한 부담 요인이 크지 않음"],
+        "metrics": {
+            "RSI 14": rsi,
+            "50일선 이격도": distance_ma50,
+            "활성 분산일": distribution_count,
+        },
+    }
+
+
+def build_consensus(signals: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    opinions = [signal["opinion"] for signal in signals.values()]
+    average = round(sum(signal["score"] for signal in signals.values()) / len(signals))
+    buy_count = opinions.count("매수 우위")
+    sell_count = opinions.count("매도/방어")
+
+    if sell_count >= 2 or average < 45:
+        opinion = "매도/방어"
+        explanation = "여러 관점에서 방어적 판단이 우세합니다."
+    elif buy_count >= 2 and average >= 65:
+        opinion = "매수 우위"
+        explanation = "다수 관점이 매수 우위에 동의합니다."
+    else:
+        opinion = "중립/관망"
+        explanation = "의견이 엇갈려 추가 확인이 필요합니다."
+
+    return {
+        "name": "종합 의견",
+        "opinion": opinion,
+        "score": average,
+        "explanation": explanation,
+        "buy_count": buy_count,
+        "sell_count": sell_count,
+    }
+
+
+def opinion_from_score(score: int | float) -> str:
+    if score >= 65:
+        return "매수 우위"
+    if score >= 45:
+        return "중립/관망"
+    return "매도/방어"
 
 
 def find_rally_attempt(df: pd.DataFrame) -> dict[str, Any] | None:
