@@ -450,6 +450,44 @@ def render_overview_tab(items: list[dict[str, Any]], overview: dict[str, Any]) -
             with col:
                 render_consensus_card(item)
 
+    render_overview_guide()
+
+
+def render_overview_guide() -> None:
+    st.markdown('<div class="section-title">개요 탭 판정 설명서</div>', unsafe_allow_html=True)
+    with st.expander("종합 의견은 이렇게 정해집니다", expanded=False):
+        st.markdown(
+            """
+            **개요 탭은 세 가지 관점의 의견을 합산해 최종 의견을 냅니다.**
+
+            - **윌리엄 오닐:** 팔로우쓰루데이, 분산일, 스톨링, 랠리 실패 여부를 봅니다.
+            - **추세/모멘텀:** 20일선, 50일선, 200일선, 최근 20·60거래일 수익률을 봅니다.
+            - **리스크 점검:** RSI, 50일선 이격도, 분산일 누적과 집중 여부를 봅니다.
+
+            각 관점은 0~100점으로 계산되고, 지수별 **종합 점수**는 세 관점 점수의 평균입니다.
+            """
+        )
+        st.markdown(
+            """
+            **지수별 최종 의견**
+
+            - **매수 우위:** 세 관점 중 2개 이상이 매수 우위이고, 종합 점수가 65점 이상일 때
+            - **중립/관망:** 매수와 방어 의견이 엇갈리거나, 종합 점수가 애매한 중간 구간일 때
+            - **매도/방어:** 세 관점 중 2개 이상이 매도/방어이거나, 종합 점수가 45점 미만일 때
+            """
+        )
+        st.markdown(
+            """
+            **시장 전반 판단**
+
+            - **시장 전반 매수 우위:** 4개 지수 중 3개 이상이 매수 우위이고, 평균 점수가 65점 이상일 때
+            - **시장 전반 중립/관망:** 지수별 의견이 엇갈려 방향 확인이 더 필요할 때
+            - **시장 전반 방어 우선:** 4개 지수 중 2개 이상이 매도/방어이거나, 평균 점수가 45점 미만일 때
+
+            `중립/관망`은 매수와 매도가 반반이라는 뜻보다는, **아직 한쪽으로 강하게 결론 내리기 어렵다**는 의미입니다.
+            """
+        )
+
 
 def render_oneil_tab(snapshot: dict[str, Any]) -> None:
     summary = snapshot["market_summary"]
