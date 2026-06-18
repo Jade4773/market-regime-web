@@ -205,15 +205,28 @@ def render_consensus_card(item: dict[str, Any]) -> None:
             <div class="meter"><span style="width:{consensus["score"]}%"></span></div>
             <strong>{consensus["score"]}</strong>
           </div>
-          <div class="opinion-list">
-            <a href="?tab=oneil"><span>윌리엄 오닐</span><strong class="{regime_tone(signals["oneil"]["opinion"])}">{signals["oneil"]["opinion"]}</strong></a>
-            <a href="?tab=trend"><span>추세/모멘텀</span><strong class="{regime_tone(signals["trend"]["opinion"])}">{signals["trend"]["opinion"]}</strong></a>
-            <a href="?tab=risk"><span>리스크 점검</span><strong class="{regime_tone(signals["risk"]["opinion"])}">{signals["risk"]["opinion"]}</strong></a>
-          </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    render_signal_jump_buttons(signals, item["ticker"])
+
+
+def render_signal_jump_buttons(signals: dict[str, Any], key_prefix: str) -> None:
+    st.caption("관점별 의견을 누르면 해당 탭으로 이동합니다.")
+    for signal_key, label in [
+        ("oneil", "윌리엄 오닐"),
+        ("trend", "추세/모멘텀"),
+        ("risk", "리스크 점검"),
+    ]:
+        opinion = signals[signal_key]["opinion"]
+        if st.button(
+            f"{label}  ·  {opinion}",
+            key=f"jump_{key_prefix}_{signal_key}",
+            use_container_width=True,
+        ):
+            set_active_tab(signal_key)
+            st.rerun()
 
 
 def render_signal_card(item: dict[str, Any], signal_key: str) -> None:
@@ -324,6 +337,28 @@ def dashboard() -> None:
             background:#3182f6;
             color:#ffffff;
             box-shadow:0 5px 16px rgba(49,130,246,.22);
+        }
+        div[data-testid="stButton"] > button {
+            min-height: 38px;
+            border-radius: 999px;
+            border: 1px solid #d7e8ff;
+            font-weight: 800;
+            transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+        }
+        div[data-testid="stButton"] > button:hover {
+            border-color: #3182f6;
+            box-shadow: 0 5px 16px rgba(49,130,246,.14);
+            transform: translateY(-1px);
+        }
+        div[data-testid="stButton"] > button[kind="primary"] {
+            background:#3182f6 !important;
+            border-color:#3182f6 !important;
+            color:#ffffff !important;
+            box-shadow:0 5px 16px rgba(49,130,246,.18);
+        }
+        div[data-testid="stButton"] > button[kind="secondary"] {
+            background:#ffffff !important;
+            color:#416b9f !important;
         }
         .region-card {
             min-height: 142px;
@@ -457,21 +492,31 @@ def render_market_dashboard() -> None:
 
 
 def get_active_tab() -> str:
-    tab = st.query_params.get("tab", "overview")
-    if isinstance(tab, list):
-        tab = tab[0] if tab else "overview"
-    return tab if tab in TAB_LABELS else "overview"
+    if "active_tab" not in st.session_state:
+        tab = st.query_params.get("tab", "overview")
+        if isinstance(tab, list):
+            tab = tab[0] if tab else "overview"
+        st.session_state.active_tab = tab if tab in TAB_LABELS else "overview"
+    return st.session_state.active_tab
+
+
+def set_active_tab(tab: str) -> None:
+    if tab in TAB_LABELS:
+        st.session_state.active_tab = tab
 
 
 def render_tab_menu(active_tab: str) -> None:
-    links = []
-    for key, label in TAB_LABELS.items():
-        active_class = " active" if key == active_tab else ""
-        links.append(f'<a class="tab-link{active_class}" href="?tab={key}">{label}</a>')
-    st.markdown(
-        f'<nav class="tab-menu" aria-label="시그널 메뉴">{"".join(links)}</nav>',
-        unsafe_allow_html=True,
-    )
+    cols = st.columns(len(TAB_LABELS))
+    for col, (key, label) in zip(cols, TAB_LABELS.items()):
+        with col:
+            if st.button(
+                label,
+                key=f"nav_{key}",
+                type="primary" if key == active_tab else "secondary",
+                use_container_width=True,
+            ):
+                set_active_tab(key)
+                st.rerun()
 
 
 def build_overview(items: list[dict[str, Any]]) -> dict[str, Any]:
