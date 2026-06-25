@@ -13,8 +13,11 @@ https://appapppy-cmks8kxu73qik7iqxaiux4.streamlit.app/
 - NASDAQ Composite
 - S&P 500
 
-Daily price data comes from Yahoo Finance. ETF volume proxies are used for
-institutional-volume confirmation:
+Daily price data comes from Yahoo Finance. If Yahoo Finance lags or returns
+empty latest rows for Korean indexes, KOSPI and KOSPI 200 are automatically
+extended with Npay Securities index data and labeled in the UI.
+
+ETF volume proxies are used for institutional-volume confirmation:
 
 - KOSPI / KOSPI 200: `069500.KS`
 - NASDAQ Composite: `QQQ`
@@ -30,6 +33,22 @@ institutional-volume confirmation:
 - Combined market-wide regime
 - Separate Korea and U.S. regime summaries
 - A valid follow-through day on either the Nasdaq Composite or S&P 500 can confirm the U.S. rally
+
+## Project Structure
+
+```text
+streamlit_app.py        Streamlit Cloud entry point
+market_pulse/
+  data.py               Yahoo Finance and Npay Securities data loading
+  rules.py              William O'Neil, trend, risk, and consensus rules
+  ui.py                 Streamlit screens, cards, tabs, and styling
+  __init__.py           Python package marker
+.streamlit/config.toml  Streamlit runtime configuration
+requirements.txt        Python dependencies
+```
+
+The root folder intentionally stays small. Most feature work should happen
+inside `market_pulse/`.
 
 ## Run Locally
 

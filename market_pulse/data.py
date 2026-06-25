@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
 
-from market_rules import analyze_index
+from market_pulse.rules import analyze_index
 
 
 SNAPSHOT_SCHEMA_VERSION = 7
