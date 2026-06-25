@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -13,12 +14,12 @@ import requests
 from market_rules import analyze_index
 
 
-SNAPSHOT_SCHEMA_VERSION = 6
+SNAPSHOT_SCHEMA_VERSION = 7
 
 
 INDEXES = {
-    "kospi200": {"name": "KOSPI 200", "ticker": "^KS200", "volume_ticker": "069500.KS", "ftd_min_gain_pct": 1.0, "currency": "KRW"},
-    "kospi": {"name": "KOSPI", "ticker": "^KS11", "volume_ticker": "069500.KS", "ftd_min_gain_pct": 1.0, "currency": "KRW"},
+    "kospi200": {"name": "KOSPI 200", "ticker": "^KS200", "volume_ticker": "069500.KS", "naver_code": "KPI200", "ftd_min_gain_pct": 1.0, "currency": "KRW"},
+    "kospi": {"name": "KOSPI", "ticker": "^KS11", "volume_ticker": "069500.KS", "naver_code": "KOSPI", "ftd_min_gain_pct": 1.0, "currency": "KRW"},
     "nasdaq_composite": {"name": "나스닥종합", "ticker": "^IXIC", "volume_ticker": "QQQ", "ftd_min_gain_pct": 1.0, "currency": "USD"},
     "sp500": {"name": "S&P 500", "ticker": "^GSPC", "volume_ticker": "SPY", "ftd_min_gain_pct": 1.0, "currency": "USD"},
 }
@@ -48,7 +49,7 @@ def get_market_snapshot() -> dict[str, Any]:
     results = {}
     for key, meta in INDEXES.items():
         try:
-            history = fetch_history(meta["ticker"], meta["volume_ticker"])
+            history = fetch_history(meta)
             results[key] = analyze_index(meta, history)
         except Exception as exc:
             results[key] = {
@@ -66,8 +67,11 @@ def get_market_snapshot() -> dict[str, Any]:
     return snapshot
 
 
-def fetch_history(ticker: str, volume_ticker: str | None = None) -> pd.DataFrame:
+def fetch_history(meta: dict[str, Any]) -> pd.DataFrame:
+    ticker = meta["ticker"]
+    volume_ticker = meta.get("volume_ticker")
     df = fetch_yahoo_chart(ticker)
+    df = apply_naver_fallback(df, meta.get("naver_code"))
     if volume_ticker and volume_ticker != ticker:
         proxy = fetch_yahoo_chart(volume_ticker)[["Close", "Volume"]].rename(
             columns={"Close": "VolumeProxyClose", "Volume": "VolumeProxy"}
@@ -117,7 +121,72 @@ def fetch_yahoo_chart(ticker: str) -> pd.DataFrame:
     )
     df.index = pd.to_datetime(df.index)
     df = df.dropna(subset=["Close"]).sort_index().copy()
+    df["DataSource"] = "Yahoo Finance"
+    df["DataStatus"] = "마감 기준"
+    df["SourceNote"] = "야후 파이낸스 기준"
     return df
+
+
+def apply_naver_fallback(df: pd.DataFrame, naver_code: str | None) -> pd.DataFrame:
+    if not naver_code:
+        return df
+
+    try:
+        naver = fetch_naver_index_chart(naver_code)
+    except Exception:
+        return df
+
+    if naver.empty:
+        return df
+
+    latest_yahoo_date = df.index.max()
+    latest_naver_date = naver.index.max()
+    if pd.isna(latest_yahoo_date) or latest_naver_date <= latest_yahoo_date:
+        return df
+
+    extra = naver.loc[naver.index > latest_yahoo_date].copy()
+    if extra.empty:
+        return df
+
+    merged = pd.concat([df, extra], axis=0)
+    return merged[~merged.index.duplicated(keep="last")].sort_index()
+
+
+def fetch_naver_index_chart(code: str) -> pd.DataFrame:
+    url = f"https://api.stock.naver.com/chart/domestic/index/{code}?periodType=dayCandle"
+    response = requests.get(
+        url,
+        headers={"User-Agent": "Mozilla/5.0", "Referer": "https://stock.naver.com/"},
+        timeout=20,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    rows = payload.get("priceInfos") or []
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(
+        {
+            "Open": [row.get("openPrice") for row in rows],
+            "High": [row.get("highPrice") for row in rows],
+            "Low": [row.get("lowPrice") for row in rows],
+            "Close": [row.get("closePrice") for row in rows],
+            "Volume": [row.get("accumulatedTradingVolume") for row in rows],
+        },
+        index=[pd.to_datetime(row.get("localDate"), format="%Y%m%d") for row in rows],
+    )
+    df = df.dropna(subset=["Close"]).sort_index().copy()
+    df["DataSource"] = "Npay 증권"
+    df["DataStatus"] = naver_data_status(df.index.max())
+    df["SourceNote"] = "야후 지연으로 네이버 대체 데이터 사용"
+    return df
+
+
+def naver_data_status(latest_date: pd.Timestamp) -> str:
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
+    if latest_date.date() == now.date() and now.hour < 16:
+        return "장중 잠정"
+    return "마감 기준"
 
 
 def build_market_summary(results: dict[str, Any]) -> dict[str, Any]:

@@ -34,6 +34,22 @@ def format_pct(value: float | None) -> str:
     return f"{value:+.2f}%"
 
 
+def data_meta_text(item: dict[str, Any]) -> str:
+    source = item.get("data_source", "Yahoo Finance")
+    status = item.get("data_status", "마감 기준")
+    return f"{item['ticker']} · {item['last_date']} · {source} · {status}"
+
+
+def data_source_badge(item: dict[str, Any]) -> str:
+    source = item.get("data_source", "Yahoo Finance")
+    status = item.get("data_status", "마감 기준")
+    if source == "Npay 증권":
+        return f'<span class="source-badge fallback">Npay 대체 · {status}</span>'
+    if status == "장중 잠정":
+        return f'<span class="source-badge provisional">장중 잠정</span>'
+    return '<span class="source-badge">Yahoo</span>'
+
+
 def badge_style(regime: str) -> str:
     if "매수" in regime:
         return "background:#e8f3ff;color:#1b64da;"
@@ -83,9 +99,12 @@ def render_market_card(item: dict[str, Any]) -> None:
           <div class="card-head">
             <div>
               <h3>{item["name"]}</h3>
-              <p>{item["ticker"]} · {item["last_date"]}</p>
+              <p>{data_meta_text(item)}</p>
             </div>
-            <span class="regime-badge" style="{badge_style(item["regime"])}">{item["regime"]}</span>
+            <div class="badge-stack">
+              {data_source_badge(item)}
+              <span class="regime-badge" style="{badge_style(item["regime"])}">{item["regime"]}</span>
+            </div>
           </div>
           <div class="price-row">
             <strong>{format_number(item["close"])}</strong>
@@ -191,9 +210,12 @@ def render_consensus_card(item: dict[str, Any]) -> None:
           <div class="card-head">
             <div>
               <h3>{item["name"]}</h3>
-              <p>{item["ticker"]} · {item["last_date"]}</p>
+              <p>{data_meta_text(item)}</p>
             </div>
-            <span class="regime-badge" style="{badge_style(consensus["opinion"])}">{consensus["opinion"]}</span>
+            <div class="badge-stack">
+              {data_source_badge(item)}
+              <span class="regime-badge" style="{badge_style(consensus["opinion"])}">{consensus["opinion"]}</span>
+            </div>
           </div>
           <div class="price-row">
             <strong>{format_number(item["close"])}</strong>
@@ -244,7 +266,7 @@ def render_signal_card(item: dict[str, Any], signal_key: str) -> None:
           <div class="card-head">
             <div>
               <h3>{item["name"]}</h3>
-              <p>{signal["name"]}</p>
+              <p>{signal["name"]} · {item.get("data_source", "Yahoo Finance")} · {item.get("data_status", "마감 기준")}</p>
             </div>
             <span class="regime-badge" style="{badge_style(signal["opinion"])}">{signal["opinion"]}</span>
           </div>
@@ -400,6 +422,29 @@ def dashboard() -> None:
             font-weight: 800;
             white-space: nowrap;
         }
+        .badge-stack {
+            display:flex;
+            flex-direction:column;
+            align-items:flex-end;
+            gap:6px;
+        }
+        .source-badge {
+            border-radius:999px;
+            padding:4px 8px;
+            background:#f0f6ff;
+            color:#6f87a8;
+            font-size:11px;
+            font-weight:800;
+            white-space:nowrap;
+        }
+        .source-badge.fallback {
+            background:#fff7e8;
+            color:#b76b00;
+        }
+        .source-badge.provisional {
+            background:#fff0f0;
+            color:#d92d35;
+        }
         .price-row { align-items: baseline; margin-top: 22px; }
         .price-row strong { font-size: 32px; line-height: 1; color:#172b4d; }
         .up { color: #3182f6; font-weight: 800; }
@@ -451,6 +496,7 @@ def dashboard() -> None:
             .summary-title { font-size:23px; }
             .region-card { min-height:0; }
             .market-card { padding:18px; }
+            .badge-stack { align-items:flex-start; }
             .price-row strong { font-size:29px; }
             .tab-menu { width:100%; border-radius:16px; }
             .tab-menu a { flex:1 1 45%; }
@@ -597,6 +643,15 @@ def render_overview_guide() -> None:
             - **시장 전반 방어 우선:** 4개 지수 중 2개 이상이 매도/방어이거나, 평균 점수가 45점 미만일 때
 
             `중립/관망`은 매수와 매도가 반반이라는 뜻보다는, **아직 한쪽으로 강하게 결론 내리기 어렵다**는 의미입니다.
+            """
+        )
+        st.markdown(
+            """
+            **데이터 출처 표시**
+
+            - **Yahoo:** 야후 파이낸스에서 최신 종가가 정상 확인된 상태입니다.
+            - **Npay 대체:** 야후의 한국 지수 데이터가 늦거나 비어 있어 Npay 증권 값을 대신 사용한 상태입니다.
+            - **장중 잠정:** 당일 장중 값일 수 있어, 장마감 후 신호가 달라질 수 있습니다.
             """
         )
 
