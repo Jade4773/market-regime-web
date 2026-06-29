@@ -3,10 +3,9 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
-from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -183,7 +182,7 @@ def fetch_naver_index_chart(code: str) -> pd.DataFrame:
 
 
 def naver_data_status(latest_date: pd.Timestamp) -> str:
-    now = datetime.now(ZoneInfo("Asia/Seoul"))
+    now = datetime.now(timezone(timedelta(hours=9)))
     if latest_date.date() == now.date() and now.hour < 16:
         return "장중 잠정"
     return "마감 기준"
