@@ -287,7 +287,12 @@ def render_signal_card(item: dict[str, Any], signal_key: str) -> None:
                 {
                     "지표": name,
                     "값": format_pct(value)
-                    if "수익률" in name or "이격도" in name
+                    if (
+                        "수익률" in name
+                        or "이격도" in name
+                        or "대비" in name
+                        or "변화" in name
+                    )
                     else format_number(value)
                     if isinstance(value, (int, float))
                     else value,
@@ -619,7 +624,7 @@ def render_overview_guide() -> None:
             **개요 탭은 세 가지 관점의 의견을 합산해 최종 의견을 냅니다.**
 
             - **윌리엄 오닐:** 팔로우쓰루데이, 분산일, 스톨링, 랠리 실패 여부를 봅니다.
-            - **추세/모멘텀:** 20일선, 50일선, 200일선, 최근 20·60거래일 수익률을 봅니다.
+            - **추세/모멘텀:** 50·150·200일선 배열, 200일선 방향, 3개월·6개월 수익률, 52주 위치를 봅니다.
             - **리스크 점검:** RSI, 50일선 이격도, 분산일 누적과 집중 여부를 봅니다.
 
             각 관점은 0~100점으로 계산되고, 지수별 **종합 점수**는 세 관점 점수의 평균입니다.
@@ -710,14 +715,36 @@ def render_signal_tab(items: list[dict[str, Any]], signal_key: str, title: str) 
             with col:
                 render_signal_card(item, signal_key)
 
-    with st.expander(f"{title} 판정 기준"):
+    if signal_key == "trend":
+        st.markdown('<div class="section-title">추세/모멘텀 판정방식 해설</div>', unsafe_allow_html=True)
+    with st.expander(f"{title} 판정 기준", expanded=signal_key == "trend"):
         if signal_key == "trend":
             st.markdown(
                 """
-                - **20일선·50일선:** 현재 가격이 주요 이동평균 위에 있으면 우호적으로 봅니다.
-                - **50일선과 200일선:** 50일선이 200일선보다 높으면 중기 상승 추세로 봅니다.
-                - **20·60거래일 수익률:** 최근 상승 탄력이 살아 있는지 확인합니다.
+                - **추세 템플릿:** 가격이 50·150·200일선 위에 있는지, 50일선 > 150일선 > 200일선 배열인지 봅니다.
+                - **장기 추세 방향:** 200일선이 최근 20거래일 전보다 상승했는지 봅니다.
+                - **상대강도/모멘텀:** 최근 3개월·6개월 수익률이 플러스인지, 52주 고점과 저점 대비 위치가 양호한지 봅니다.
                 """
+            )
+            st.markdown(
+                """
+                **점수표**
+
+                - 가격이 50일선 위: 15점
+                - 가격이 150일선 위: 15점
+                - 가격이 200일선 위: 15점
+                - 50일선 > 150일선 > 200일선: 15점
+                - 200일선이 상승 중: 10점
+                - 3개월 수익률 플러스: 10점
+                - 6개월 수익률 플러스: 10점
+                - 52주 고점 대비 -15% 이내: 5점
+                - 52주 저점 대비 +20% 이상: 5점
+
+                **판정:** 65점 이상은 매수 우위, 45~64점은 중립/관망, 45점 미만은 매도/방어입니다.
+                """
+            )
+            st.caption(
+                "이 기준은 Minervini식 추세 템플릿과 IBD식 상대강도 사고방식을 지수 판단용으로 단순화한 보조 모델입니다."
             )
         else:
             st.markdown(

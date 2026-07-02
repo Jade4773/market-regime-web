@@ -94,6 +94,7 @@ def analyze_index(meta: dict[str, str], history: pd.DataFrame) -> dict[str, Any]
         "value": float(latest["Value"]) if pd.notna(latest["Value"]) else 0,
         "volume_change_pct": _pct(latest["Volume"], previous["Volume"]),
         "ma50": float(latest["ma50"]) if pd.notna(latest["ma50"]) else None,
+        "ma150": float(latest["ma150"]) if pd.notna(latest["ma150"]) else None,
         "ma200": float(latest["ma200"]) if pd.notna(latest["ma200"]) else None,
         "regime": regime,
         "score": score,
@@ -117,9 +118,10 @@ def prepare(history: pd.DataFrame) -> pd.DataFrame:
     df = history.sort_index().copy()
     df["pct_change"] = df["Close"].pct_change() * 100
     df["volume_up"] = df["Volume"] > df["Volume"].shift(1)
-    df["ma50"] = df["Close"].rolling(50).mean()
-    df["ma200"] = df["Close"].rolling(200).mean()
     df["ma20"] = df["Close"].rolling(20).mean()
+    df["ma50"] = df["Close"].rolling(50).mean()
+    df["ma150"] = df["Close"].rolling(150).mean()
+    df["ma200"] = df["Close"].rolling(200).mean()
     delta = df["Close"].diff()
     gain = delta.clip(lower=0).rolling(14).mean()
     loss = -delta.clip(upper=0).rolling(14).mean()
@@ -127,6 +129,14 @@ def prepare(history: pd.DataFrame) -> pd.DataFrame:
     df["rsi14"] = 100 - (100 / (1 + rs))
     df["return20"] = df["Close"].pct_change(20) * 100
     df["return60"] = df["Close"].pct_change(60) * 100
+    df["return63"] = df["Close"].pct_change(63) * 100
+    df["return126"] = df["Close"].pct_change(126) * 100
+    df["return252"] = df["Close"].pct_change(252) * 100
+    df["high252"] = df["Close"].rolling(252).max()
+    df["low252"] = df["Close"].rolling(252).min()
+    df["distance_high252"] = (df["Close"] / df["high252"] - 1) * 100
+    df["distance_low252"] = (df["Close"] / df["low252"] - 1) * 100
+    df["ma200_slope20"] = (df["ma200"] / df["ma200"].shift(20) - 1) * 100
     df["close_above_ma50"] = df["Close"] > df["ma50"]
     df["close_above_ma200"] = df["Close"] > df["ma200"]
     return df
@@ -135,37 +145,60 @@ def prepare(history: pd.DataFrame) -> pd.DataFrame:
 def analyze_trend_signal(df: pd.DataFrame) -> dict[str, Any]:
     latest = df.iloc[-1]
     close = float(latest["Close"])
-    ma20 = float(latest["ma20"]) if pd.notna(latest["ma20"]) else None
     ma50 = float(latest["ma50"]) if pd.notna(latest["ma50"]) else None
+    ma150 = float(latest["ma150"]) if pd.notna(latest["ma150"]) else None
     ma200 = float(latest["ma200"]) if pd.notna(latest["ma200"]) else None
-    return20 = float(latest["return20"]) if pd.notna(latest["return20"]) else 0.0
-    return60 = float(latest["return60"]) if pd.notna(latest["return60"]) else 0.0
+    return63 = float(latest["return63"]) if pd.notna(latest["return63"]) else 0.0
+    return126 = float(latest["return126"]) if pd.notna(latest["return126"]) else 0.0
+    return252 = float(latest["return252"]) if pd.notna(latest["return252"]) else None
+    distance_high252 = (
+        float(latest["distance_high252"]) if pd.notna(latest["distance_high252"]) else None
+    )
+    distance_low252 = (
+        float(latest["distance_low252"]) if pd.notna(latest["distance_low252"]) else None
+    )
+    ma200_slope20 = (
+        float(latest["ma200_slope20"]) if pd.notna(latest["ma200_slope20"]) else None
+    )
 
     score = 0
     reasons = []
-    if ma20 and close > ma20:
-        score += 20
-        reasons.append("20일선 위")
+
     if ma50 and close > ma50:
-        score += 25
-        reasons.append("50일선 위")
-    if ma50 and ma200 and ma50 > ma200:
-        score += 25
-        reasons.append("50일선이 200일선 위")
-    if return20 > 0:
         score += 15
-        reasons.append("20거래일 수익률 양호")
-    if return60 > 0:
+        reasons.append("가격이 50일선 위")
+    if ma150 and close > ma150:
         score += 15
-        reasons.append("60거래일 수익률 양호")
+        reasons.append("가격이 150일선 위")
+    if ma200 and close > ma200:
+        score += 15
+        reasons.append("가격이 200일선 위")
+    if ma50 and ma150 and ma200 and ma50 > ma150 > ma200:
+        score += 15
+        reasons.append("50일선 > 150일선 > 200일선")
+    if ma200_slope20 is not None and ma200_slope20 > 0:
+        score += 10
+        reasons.append("200일선 상승 중")
+    if return63 > 0:
+        score += 10
+        reasons.append("3개월 수익률 플러스")
+    if return126 > 0:
+        score += 10
+        reasons.append("6개월 수익률 플러스")
+    if distance_high252 is not None and distance_high252 >= -15:
+        score += 5
+        reasons.append("52주 고점 대비 낙폭 제한")
+    if distance_low252 is not None and distance_low252 >= 20:
+        score += 5
+        reasons.append("52주 저점 대비 충분한 회복")
 
     opinion = opinion_from_score(score)
     if opinion == "매수 우위":
-        explanation = "중기 추세와 최근 모멘텀이 대체로 우호적입니다."
+        explanation = "추세 템플릿과 상대강도 조건이 대체로 우호적입니다."
     elif opinion == "중립/관망":
-        explanation = "추세 조건이 엇갈려 방향 확인이 필요합니다."
+        explanation = "상승 추세 조건과 모멘텀 조건이 엇갈려 추가 확인이 필요합니다."
     else:
-        explanation = "주요 이동평균 또는 최근 모멘텀이 약합니다."
+        explanation = "주요 이동평균 배열 또는 상대강도 조건이 약해 방어적으로 봅니다."
 
     return {
         "name": "추세/모멘텀",
@@ -174,11 +207,15 @@ def analyze_trend_signal(df: pd.DataFrame) -> dict[str, Any]:
         "explanation": explanation,
         "details": reasons or ["확인 가능한 우호 조건이 제한적"],
         "metrics": {
-            "20일 수익률": return20,
-            "60일 수익률": return60,
-            "20일선": ma20,
+            "3개월 수익률": return63,
+            "6개월 수익률": return126,
+            "12개월 수익률": return252,
             "50일선": ma50,
+            "150일선": ma150,
             "200일선": ma200,
+            "200일선 20거래일 변화": ma200_slope20,
+            "52주 고점 대비": distance_high252,
+            "52주 저점 대비": distance_low252,
         },
     }
 
