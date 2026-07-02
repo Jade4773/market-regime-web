@@ -721,8 +721,8 @@ def render_signal_tab(items: list[dict[str, Any]], signal_key: str, title: str) 
                 render_signal_card(item, signal_key)
 
     if signal_key == "trend":
-        st.markdown('<div class="section-title">추세/모멘텀 판정방식 해설</div>', unsafe_allow_html=True)
-        render_trend_scoring_guide()
+        with st.expander("추세/모멘텀 판정방식 해설", expanded=False):
+            render_trend_scoring_guide()
     else:
         with st.expander(f"{title} 판정 기준"):
             st.markdown(
