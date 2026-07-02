@@ -709,6 +709,11 @@ def render_region_summary(summary: dict[str, Any]) -> None:
 
 def render_signal_tab(items: list[dict[str, Any]], signal_key: str, title: str) -> None:
     st.markdown(f'<div class="section-title">{title}</div>', unsafe_allow_html=True)
+    if signal_key == "trend":
+        st.info(
+            "새 추세/모멘텀 기준: 50·150·200일선 추세 템플릿, 200일선 방향, "
+            "3개월·6개월 수익률, 52주 고점·저점 대비 위치를 함께 봅니다."
+        )
     for row_start in range(0, len(items), 2):
         cols = st.columns(2)
         for col, item in zip(cols, items[row_start : row_start + 2]):
