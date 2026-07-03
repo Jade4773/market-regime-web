@@ -127,6 +127,10 @@ def prepare(history: pd.DataFrame) -> pd.DataFrame:
     loss = -delta.clip(upper=0).rolling(14).mean()
     rs = gain / loss
     df["rsi14"] = 100 - (100 / (1 + rs))
+    df["daily_return"] = df["Close"].pct_change()
+    df["vol20"] = df["daily_return"].rolling(20).std() * (252**0.5) * 100
+    df["vol20_median252"] = df["vol20"].rolling(252).median()
+    df["vol20_ratio"] = df["vol20"] / df["vol20_median252"]
     df["return20"] = df["Close"].pct_change(20) * 100
     df["return60"] = df["Close"].pct_change(60) * 100
     df["return63"] = df["Close"].pct_change(63) * 100
@@ -226,48 +230,36 @@ def analyze_risk_signal(
     latest = df.iloc[-1]
     close = float(latest["Close"])
     ma50 = float(latest["ma50"]) if pd.notna(latest["ma50"]) else None
+    ma200 = float(latest["ma200"]) if pd.notna(latest["ma200"]) else None
+    ma200_slope20 = (
+        float(latest["ma200_slope20"]) if pd.notna(latest["ma200_slope20"]) else None
+    )
     rsi = float(latest["rsi14"]) if pd.notna(latest["rsi14"]) else None
     distance_ma50 = _pct(close, ma50) if ma50 else 0.0
+    drawdown_52w = (
+        float(latest["distance_high252"]) if pd.notna(latest["distance_high252"]) else None
+    )
+    vol20 = float(latest["vol20"]) if pd.notna(latest["vol20"]) else None
+    vol20_ratio = (
+        float(latest["vol20_ratio"]) if pd.notna(latest["vol20_ratio"]) else None
+    )
 
-    score = 60
-    details = []
-    if ma50 and close > ma50:
-        score += 15
-        details.append("50일선 위에서 유지")
-    else:
-        score -= 20
-        details.append("50일선 아래 또는 근접")
-    if rsi is not None:
-        if 40 <= rsi <= 70:
-            score += 15
-            details.append("RSI가 과열·침체 구간 밖")
-        elif rsi > 75:
-            score -= 20
-            details.append("RSI 과열권")
-        elif rsi < 35:
-            score -= 15
-            details.append("RSI 침체권")
-    if distance_ma50 > 12:
-        score -= 30
-        details.append("50일선 대비 단기 과열")
-    if distance_ma50 > 20:
-        score -= 15
-        details.append("50일선 대비 이격도 매우 큼")
-    if distribution_count >= SETTINGS.distribution_warning_count:
-        score -= 20
-        details.append("분산일 누적")
-    if distribution_clustered:
-        score -= 15
-        details.append("최근 분산일 집중")
-
-    score = max(0, min(score, 100))
+    component_scores = {
+        "추세 방어력": score_trend_protection(close, ma50, ma200, ma200_slope20),
+        "52주 낙폭": score_drawdown(drawdown_52w),
+        "RSI 과열/침체": score_rsi_risk(rsi),
+        "변동성 부담": score_volatility(vol20_ratio),
+        "분산일 부담": score_distribution_risk(distribution_count, distribution_clustered),
+    }
+    score = round(sum(component_scores.values()) / len(component_scores))
+    details = [f"{name} {value}점" for name, value in component_scores.items()]
     opinion = opinion_from_score(score)
     if opinion == "매수 우위":
-        explanation = "과열과 매도 압력 부담이 제한적입니다."
+        explanation = "추세 훼손, 낙폭, 과열, 변동성, 분산일 부담이 전반적으로 낮습니다."
     elif opinion == "중립/관망":
-        explanation = "일부 부담 요인이 있어 무리한 추격은 피하는 구간입니다."
+        explanation = "일부 위험 항목이 올라와 있어 무리한 추격은 피하는 구간입니다."
     else:
-        explanation = "과열, 추세 이탈, 분산일 부담 중 하나 이상이 큽니다."
+        explanation = "여러 위험 항목이 동시에 악화되어 방어적으로 봅니다."
 
     return {
         "name": "리스크 점검",
@@ -276,11 +268,93 @@ def analyze_risk_signal(
         "explanation": explanation,
         "details": details or ["특별한 부담 요인이 크지 않음"],
         "metrics": {
+            "추세 방어력 점수": component_scores["추세 방어력"],
+            "52주 낙폭 점수": component_scores["52주 낙폭"],
+            "RSI 위험 점수": component_scores["RSI 과열/침체"],
+            "변동성 점수": component_scores["변동성 부담"],
+            "분산일 점수": component_scores["분산일 부담"],
             "RSI 14": rsi,
             "50일선 이격도": distance_ma50,
+            "52주 고점 대비": drawdown_52w,
+            "20일 연율화 변동성": vol20,
+            "변동성 배율": vol20_ratio,
             "활성 분산일": distribution_count,
         },
     }
+
+
+def score_trend_protection(
+    close: float, ma50: float | None, ma200: float | None, ma200_slope20: float | None
+) -> int:
+    if ma50 and ma200 and close > ma50 and close > ma200 and (ma200_slope20 or 0) > 0:
+        return 100
+    if ma200 and close > ma200 and (ma200_slope20 or 0) >= 0:
+        return 80
+    if ma200 and close > ma200:
+        return 65
+    if ma50 and close > ma50:
+        return 50
+    return 25
+
+
+def score_drawdown(drawdown_52w: float | None) -> int:
+    if drawdown_52w is None:
+        return 50
+    if drawdown_52w >= -5:
+        return 100
+    if drawdown_52w >= -10:
+        return 80
+    if drawdown_52w >= -15:
+        return 60
+    if drawdown_52w >= -20:
+        return 40
+    return 20
+
+
+def score_rsi_risk(rsi: float | None) -> int:
+    if rsi is None:
+        return 50
+    if 45 <= rsi <= 65:
+        return 100
+    if 40 <= rsi < 45 or 65 < rsi <= 70:
+        return 80
+    if 35 <= rsi < 40 or 70 < rsi <= 75:
+        return 55
+    if 30 <= rsi < 35 or 75 < rsi <= 80:
+        return 30
+    return 10
+
+
+def score_volatility(vol20_ratio: float | None) -> int:
+    if vol20_ratio is None:
+        return 50
+    if vol20_ratio <= 0.8:
+        return 100
+    if vol20_ratio <= 1.0:
+        return 85
+    if vol20_ratio <= 1.25:
+        return 65
+    if vol20_ratio <= 1.5:
+        return 45
+    if vol20_ratio <= 2.0:
+        return 25
+    return 10
+
+
+def score_distribution_risk(
+    distribution_count: int, distribution_clustered: bool
+) -> int:
+    if distribution_count <= 1:
+        score = 100
+    elif distribution_count <= 3:
+        score = 75
+    elif distribution_count <= 5:
+        score = 40
+    else:
+        score = 10
+    if distribution_clustered:
+        score = min(score, 40)
+    return score
 
 
 def build_consensus(signals: dict[str, dict[str, Any]]) -> dict[str, Any]:

@@ -292,6 +292,7 @@ def render_signal_card(item: dict[str, Any], signal_key: str) -> None:
                         or "이격도" in name
                         or "대비" in name
                         or "변화" in name
+                        or "연율화" in name
                     )
                     else format_number(value)
                     if isinstance(value, (int, float))
@@ -724,14 +725,8 @@ def render_signal_tab(items: list[dict[str, Any]], signal_key: str, title: str) 
         with st.expander("추세/모멘텀 판정방식 해설", expanded=False):
             render_trend_scoring_guide()
     else:
-        with st.expander(f"{title} 판정 기준"):
-            st.markdown(
-                """
-                - **RSI 14:** 40~70은 안정, 75 이상은 단기 과열로 봅니다.
-                - **50일선 이격도:** 50일선 대비 지나치게 멀어지면 추격 매수 부담으로 봅니다.
-                - **분산일:** 분산일 누적과 집중 여부를 리스크 요인으로 반영합니다.
-                """
-            )
+        with st.expander("리스크 점검 판정방식 해설", expanded=False):
+            render_risk_scoring_guide()
 
 
 def render_trend_scoring_guide() -> None:
@@ -813,6 +808,67 @@ def render_trend_scoring_guide() -> None:
         """
     )
     st.caption("앱 버전: trend-v2-score-guide")
+
+
+def render_risk_scoring_guide() -> None:
+    st.markdown(
+        """
+        이 탭은 CNN Fear & Greed Index처럼 여러 위험 항목을 각각 0~100점으로 환산한 뒤 평균내는 방식에서 아이디어를 가져왔습니다.
+        다만 옵션, 채권, VIX 같은 외부 심리 데이터는 쓰지 않고, 현재 앱이 안정적으로 가져오는 지수 가격·거래량 데이터만 사용합니다.
+        """
+    )
+    st.dataframe(
+        [
+            {
+                "항목": "추세 방어력",
+                "좋은 상태": "가격이 50일선과 200일선 위, 200일선 상승",
+                "나쁜 상태": "가격이 50일선/200일선 아래",
+                "점수 범위": "25~100점",
+            },
+            {
+                "항목": "52주 낙폭",
+                "좋은 상태": "52주 고점 대비 -5% 이내",
+                "나쁜 상태": "52주 고점 대비 -20% 초과 하락",
+                "점수 범위": "20~100점",
+            },
+            {
+                "항목": "RSI 과열/침체",
+                "좋은 상태": "RSI 45~65",
+                "나쁜 상태": "RSI 30 미만 또는 80 초과",
+                "점수 범위": "10~100점",
+            },
+            {
+                "항목": "변동성 부담",
+                "좋은 상태": "20일 변동성이 최근 1년 중앙값 이하",
+                "나쁜 상태": "20일 변동성이 최근 1년 중앙값의 2배 초과",
+                "점수 범위": "10~100점",
+            },
+            {
+                "항목": "분산일 부담",
+                "좋은 상태": "활성 분산일 0~1회",
+                "나쁜 상태": "활성 분산일 6회 이상 또는 최근 집중",
+                "점수 범위": "10~100점",
+            },
+        ],
+        hide_index=True,
+        use_container_width=True,
+    )
+    st.markdown(
+        """
+        **최종 점수 계산**
+
+        다섯 항목의 점수를 같은 비중으로 평균냅니다. 예를 들어 각 항목이 80, 60, 100, 65, 75점이면 최종 리스크 점수는 76점입니다.
+
+        **판정 구간**
+
+        - **매수 우위:** 65점 이상. 주요 위험 항목이 전반적으로 낮습니다.
+        - **중립/관망:** 45점 이상 65점 미만. 일부 위험이 올라와 있어 추격보다 확인이 필요합니다.
+        - **매도/방어:** 45점 미만. 추세 훼손, 낙폭, 과열/침체, 변동성, 분산일 부담 중 여러 항목이 악화된 상태입니다.
+
+        이 점수는 공식 투자등급이 아니라, **현재 지수에서 방어가 필요한지 확인하는 보조 위험 점검표**입니다.
+        """
+    )
+    st.caption("앱 버전: risk-v2-equal-weight")
 
 
 def render_oneil_rules() -> None:
