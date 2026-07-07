@@ -14,6 +14,8 @@ TAB_LABELS = {
     "risk": "리스크 점검",
 }
 
+APP_VERSION = "ftd-persistence-v1"
+
 
 st.set_page_config(
     page_title="Market Regime",
