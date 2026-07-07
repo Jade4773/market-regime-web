@@ -32,15 +32,9 @@ def analyze_index(meta: dict[str, str], history: pd.DataFrame) -> dict[str, Any]
     if len(df) < 60:
         raise ValueError("not enough history")
 
-    rally = find_rally_attempt(df)
-    follow_through = (
-        find_follow_through(
-            df,
-            rally["start_pos"],
-            meta.get("ftd_min_gain_pct", SETTINGS.ftd_min_gain_pct),
-        )
-        if rally
-        else None
+    rally, follow_through = find_active_market_cycle(
+        df,
+        meta.get("ftd_min_gain_pct", SETTINGS.ftd_min_gain_pct),
     )
     distribution_days = find_distribution_days(df)
     active_distribution_days = [item for item in distribution_days if item["is_active"]]
@@ -432,6 +426,73 @@ def find_rally_attempt(df: pd.DataFrame) -> dict[str, Any] | None:
     }
 
 
+def find_active_market_cycle(
+    df: pd.DataFrame, min_gain_pct: float
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    active_pos = None
+    reset_count = 0
+    last_reset_reason = None
+    follow_through = None
+    distribution_positions: list[int] = []
+
+    for pos in range(1, len(df)):
+        row = df.iloc[pos]
+        previous = df.iloc[pos - 1]
+        starts_rally = is_rally_start(row, previous)
+        if is_distribution_signal_at(df, pos):
+            distribution_positions.append(pos)
+
+        if active_pos is None:
+            if starts_rally:
+                active_pos = pos
+                follow_through = None
+            continue
+
+        rally_low = float(df.iloc[active_pos]["Low"])
+        active_distribution_count = len(
+            active_distribution_positions(df, distribution_positions, pos)
+        )
+        distribution_reset = (
+            follow_through is not None
+            and active_distribution_count >= SETTINGS.distribution_sell_count
+        )
+        if row["Low"] < rally_low or distribution_reset:
+            reset_count += 1
+            last_reset_reason = reset_reason(
+                row,
+                distribution_reset,
+                active_distribution_count,
+            )
+            active_pos = pos if starts_rally else None
+            follow_through = None
+            continue
+
+        if follow_through is None and is_follow_through_day(
+            row,
+            pos,
+            active_pos,
+            min_gain_pct,
+        ):
+            follow_through = build_follow_through(df, active_pos, pos, min_gain_pct)
+
+    if active_pos is None:
+        return None, None
+    return build_rally_attempt(df, active_pos, reset_count, last_reset_reason), follow_through
+
+
+def reset_reason(
+    row: pd.Series,
+    distribution_reset: bool,
+    active_distribution_count: int,
+) -> str:
+    if distribution_reset:
+        return (
+            f"{row.name.strftime('%Y-%m-%d')}에 활성 분산 신호 "
+            f"{active_distribution_count}회로 이전 팔로우쓰루데이 소멸"
+        )
+    return f"{row.name.strftime('%Y-%m-%d')}에 랠리 첫날 저가 하향 돌파"
+
+
 def find_follow_through(
     df: pd.DataFrame, rally_start_pos: int, min_gain_pct: float
 ) -> dict[str, Any] | None:
@@ -479,6 +540,131 @@ def find_follow_through(
                 "early_distribution_count": early_distribution_count,
             }
     return None
+
+
+def is_rally_start(row: pd.Series, previous: pd.Series) -> bool:
+    day_range = row["High"] - row["Low"]
+    closes_upper_half = bool(
+        day_range > 0 and row["Close"] >= row["Low"] + day_range / 2
+    )
+    return bool(row["Close"] > previous["Close"] or closes_upper_half)
+
+
+def is_follow_through_day(
+    row: pd.Series,
+    pos: int,
+    rally_start_pos: int,
+    min_gain_pct: float,
+) -> bool:
+    return bool(
+        pos >= rally_start_pos + SETTINGS.min_ftd_day - 1
+        and row["pct_change"] >= min_gain_pct
+        and bool(row["volume_up"])
+    )
+
+
+def build_rally_attempt(
+    df: pd.DataFrame,
+    active_pos: int,
+    reset_count: int,
+    last_reset_reason: str | None,
+) -> dict[str, Any]:
+    low_row = df.iloc[active_pos]
+    return {
+        "start_date": low_row.name.strftime("%Y-%m-%d"),
+        "start_close": float(low_row["Close"]),
+        "start_low": float(low_row["Low"]),
+        "start_pos": active_pos,
+        "days_since_start": len(df) - active_pos,
+        "reset_count": reset_count,
+        "last_reset_reason": last_reset_reason,
+    }
+
+
+def build_follow_through(
+    df: pd.DataFrame,
+    rally_start_pos: int,
+    ftd_pos: int,
+    min_gain_pct: float,
+) -> dict[str, Any]:
+    row = df.iloc[ftd_pos]
+    day_number = ftd_pos - rally_start_pos + 1
+    early = df.iloc[ftd_pos + 1 : ftd_pos + 1 + SETTINGS.ftd_early_distribution_window]
+    early_distribution_count = sum(
+        1
+        for _, later_row in early.iterrows()
+        if later_row["pct_change"] <= SETTINGS.distribution_min_loss_pct
+        and bool(later_row["volume_up"])
+    )
+    if early_distribution_count:
+        quality = "주의"
+        quality_reason = (
+            f"팔로우쓰루데이 후 {SETTINGS.ftd_early_distribution_window}거래일 내 "
+            f"분산일이 {early_distribution_count}회 발생해 신호를 보수적으로 봅니다."
+        )
+    elif day_number > SETTINGS.ftd_ideal_last_day:
+        quality = "늦은 확인"
+        quality_reason = "통상적인 4~7일차보다 늦게 확인되었습니다."
+    else:
+        quality = "양호"
+        quality_reason = "4~7일차에 거래량 증가를 동반해 확인되었습니다."
+    return {
+        "date": row.name.strftime("%Y-%m-%d"),
+        "gain_pct": float(row["pct_change"]),
+        "required_gain_pct": min_gain_pct,
+        "day_number": day_number,
+        "close": float(row["Close"]),
+        "is_active": True,
+        "quality": quality,
+        "quality_reason": quality_reason,
+        "early_distribution_count": early_distribution_count,
+    }
+
+
+def is_distribution_signal_at(df: pd.DataFrame, pos: int) -> bool:
+    row = df.iloc[pos]
+    volume_confirms = bool(row["volume_up"])
+    is_standard = bool(
+        row["pct_change"] <= SETTINGS.distribution_min_loss_pct and volume_confirms
+    )
+
+    prior_two = df.iloc[max(0, pos - 2) : pos]
+    prior_progress = bool(
+        (prior_two["pct_change"] >= SETTINGS.stall_prior_gain_pct).any()
+    )
+    day_range = row["High"] - row["Low"]
+    closes_lower_half = bool(
+        day_range > 0 and row["Close"] <= row["Low"] + day_range / 2
+    )
+    is_stall = bool(
+        0 <= row["pct_change"] < SETTINGS.stall_max_gain_pct
+        and volume_confirms
+        and closes_lower_half
+        and prior_progress
+    )
+    return bool(is_standard or is_stall)
+
+
+def active_distribution_positions(
+    df: pd.DataFrame,
+    distribution_positions: list[int],
+    current_pos: int,
+) -> list[int]:
+    active = []
+    for position in distribution_positions:
+        age_sessions = current_pos - position
+        if age_sessions >= SETTINGS.distribution_window_days:
+            continue
+        later_high = df.iloc[position + 1 : current_pos + 1]["Close"].max()
+        rallied_5_pct = bool(
+            pd.notna(later_high)
+            and later_high
+            >= df.iloc[position]["Close"]
+            * (1 + SETTINGS.distribution_rally_expiry_pct / 100)
+        )
+        if not rallied_5_pct:
+            active.append(position)
+    return active
 
 
 def find_distribution_days(df: pd.DataFrame) -> list[dict[str, Any]]:
