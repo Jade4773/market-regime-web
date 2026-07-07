@@ -13,14 +13,14 @@ import requests
 from market_pulse.rules import analyze_index
 
 
-SNAPSHOT_SCHEMA_VERSION = 11
+SNAPSHOT_SCHEMA_VERSION = 12
 
 
 INDEXES = {
-    "kospi200": {"name": "KOSPI 200", "ticker": "^KS200", "volume_ticker": "069500.KS", "naver_code": "KPI200", "ftd_min_gain_pct": 1.0, "currency": "KRW"},
-    "kospi": {"name": "KOSPI", "ticker": "^KS11", "volume_ticker": "069500.KS", "naver_code": "KOSPI", "ftd_min_gain_pct": 1.0, "currency": "KRW"},
-    "nasdaq_composite": {"name": "나스닥종합", "ticker": "^IXIC", "volume_ticker": "QQQ", "ftd_min_gain_pct": 1.0, "currency": "USD"},
-    "sp500": {"name": "S&P 500", "ticker": "^GSPC", "volume_ticker": "SPY", "ftd_min_gain_pct": 1.0, "currency": "USD"},
+    "kospi200": {"name": "KOSPI 200", "ticker": "^KS200", "volume_ticker": "069500.KS", "naver_code": "KPI200", "ftd_min_gain_pct": 1.25, "currency": "KRW"},
+    "kospi": {"name": "KOSPI", "ticker": "^KS11", "volume_ticker": "069500.KS", "naver_code": "KOSPI", "ftd_min_gain_pct": 1.25, "currency": "KRW"},
+    "nasdaq_composite": {"name": "나스닥종합", "ticker": "^IXIC", "volume_ticker": "QQQ", "ftd_min_gain_pct": 1.7, "currency": "USD"},
+    "sp500": {"name": "S&P 500", "ticker": "^GSPC", "volume_ticker": "SPY", "ftd_min_gain_pct": 1.25, "currency": "USD"},
 }
 
 
