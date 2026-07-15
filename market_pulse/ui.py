@@ -17,14 +17,6 @@ TAB_LABELS = {
 APP_VERSION = "ftd-persistence-v1"
 
 
-def configure_page() -> None:
-    st.set_page_config(
-        page_title="Market Regime",
-        layout="wide",
-        initial_sidebar_state="collapsed",
-    )
-
-
 def format_number(value: float | int | None, digits: int = 2) -> str:
     if value is None:
         return "-"
@@ -911,7 +903,6 @@ def render_oneil_rules() -> None:
 
 def main() -> None:
     try:
-        configure_page()
         dashboard()
     except Exception as exc:
         st.error("앱을 불러오는 중 문제가 발생했습니다. 잠시 후 새로고침해 주세요.")
