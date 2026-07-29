@@ -13,7 +13,7 @@ import requests
 from market_pulse.rules import analyze_index
 
 
-SNAPSHOT_SCHEMA_VERSION = 13
+SNAPSHOT_SCHEMA_VERSION = 14
 
 
 INDEXES = {
@@ -138,16 +138,10 @@ def apply_naver_fallback(df: pd.DataFrame, naver_code: str | None) -> pd.DataFra
     if naver.empty:
         return df
 
-    latest_yahoo_date = df.index.max()
-    latest_naver_date = naver.index.max()
-    if pd.isna(latest_yahoo_date) or latest_naver_date <= latest_yahoo_date:
-        return df
-
-    extra = naver.loc[naver.index > latest_yahoo_date].copy()
-    if extra.empty:
-        return df
-
-    merged = pd.concat([df, extra], axis=0)
+    # Korean index rows from Yahoo can occasionally miss recent trading days while
+    # still reporting a latest date. Prefer Naver for its available recent window so
+    # daily changes are computed against the actual previous session.
+    merged = pd.concat([df, naver], axis=0)
     return merged[~merged.index.duplicated(keep="last")].sort_index()
 
 
