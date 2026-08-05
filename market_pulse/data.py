@@ -13,7 +13,7 @@ import requests
 from market_pulse.rules import analyze_index
 
 
-SNAPSHOT_SCHEMA_VERSION = 14
+SNAPSHOT_SCHEMA_VERSION = 15
 
 
 INDEXES = {
@@ -76,8 +76,13 @@ def fetch_history(meta: dict[str, Any]) -> pd.DataFrame:
             columns={"Close": "VolumeProxyClose", "Volume": "VolumeProxy"}
         )
         df = df.join(proxy, how="left")
-        df["Volume"] = df["VolumeProxy"].where(df["VolumeProxy"].notna(), df["Volume"])
-        df["Value"] = df["VolumeProxyClose"].fillna(df["Close"]) * df["Volume"]
+        use_proxy = df["VolumeProxy"].notna() & ~df["DataSource"].eq("Npay 증권")
+        df["Volume"] = df["Volume"].where(~use_proxy, df["VolumeProxy"])
+        df["VolumeSource"] = df["VolumeSource"].where(~use_proxy, volume_ticker)
+        value_price = df["Close"].where(
+            ~use_proxy, df["VolumeProxyClose"].fillna(df["Close"])
+        )
+        df["Value"] = value_price * df["Volume"]
     else:
         df["Value"] = df["Close"] * df["Volume"]
     return df
@@ -123,6 +128,7 @@ def fetch_yahoo_chart(ticker: str) -> pd.DataFrame:
     df["DataSource"] = "Yahoo Finance"
     df["DataStatus"] = "마감 기준"
     df["SourceNote"] = "야후 파이낸스 기준"
+    df["VolumeSource"] = ticker
     return df
 
 
@@ -172,6 +178,7 @@ def fetch_naver_index_chart(code: str) -> pd.DataFrame:
     df["DataSource"] = "Npay 증권"
     df["DataStatus"] = naver_data_status(df.index.max())
     df["SourceNote"] = "야후 지연으로 네이버 대체 데이터 사용"
+    df["VolumeSource"] = "Npay 지수 거래량"
     return df
 
 

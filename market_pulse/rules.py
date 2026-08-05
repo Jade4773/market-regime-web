@@ -73,10 +73,13 @@ def analyze_index(meta: dict[str, str], history: pd.DataFrame) -> dict[str, Any]
         "risk": risk_signal,
     }
     consensus = build_consensus(signals)
+    volume_source = latest.get("VolumeSource", meta.get("volume_ticker", meta["ticker"]))
+    if pd.isna(volume_source):
+        volume_source = meta.get("volume_ticker", meta["ticker"])
     return {
         "name": meta["name"],
         "ticker": meta["ticker"],
-        "volume_ticker": meta.get("volume_ticker", meta["ticker"]),
+        "volume_ticker": str(volume_source),
         "currency": meta["currency"],
         "last_date": latest.name.strftime("%Y-%m-%d"),
         "data_source": latest.get("DataSource", "Yahoo Finance"),
