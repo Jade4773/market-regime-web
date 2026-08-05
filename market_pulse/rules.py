@@ -36,7 +36,11 @@ def analyze_index(meta: dict[str, str], history: pd.DataFrame) -> dict[str, Any]
         df,
         meta.get("ftd_min_gain_pct", SETTINGS.ftd_min_gain_pct),
     )
-    distribution_days = find_distribution_days(df)
+    distribution_days = filter_distribution_days_for_current_cycle(
+        df,
+        find_distribution_days(df),
+        follow_through,
+    )
     active_distribution_days = [item for item in distribution_days if item["is_active"]]
     active_count = len(active_distribution_days)
     cluster_count = sum(
@@ -106,9 +110,48 @@ def analyze_index(meta: dict[str, str], history: pd.DataFrame) -> dict[str, Any]
         "expired_distribution_days": [
             item for item in distribution_days if not item["is_active"]
         ][-8:],
+        "distribution_scope": distribution_scope_label(follow_through),
         "signals": signals,
         "consensus": consensus,
     }
+
+
+def filter_distribution_days_for_current_cycle(
+    df: pd.DataFrame,
+    distribution_days: list[dict[str, Any]],
+    follow_through: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not follow_through or not follow_through.get("is_active"):
+        return distribution_days
+
+    ftd_pos = follow_through_position(df, follow_through)
+    if ftd_pos is None:
+        return distribution_days
+
+    return [
+        item
+        for item in distribution_days
+        if item.get("position", -1) > ftd_pos
+    ]
+
+
+def distribution_scope_label(follow_through: dict[str, Any] | None) -> str:
+    if follow_through and follow_through.get("is_active"):
+        return f"{follow_through['date']} FTD 이후"
+    return f"최근 {SETTINGS.distribution_window_days}거래일"
+
+
+def follow_through_position(
+    df: pd.DataFrame, follow_through: dict[str, Any]
+) -> int | None:
+    if "position" in follow_through:
+        return int(follow_through["position"])
+
+    date = pd.to_datetime(follow_through.get("date"))
+    matches = df.index.get_indexer([date])
+    if len(matches) and matches[0] >= 0:
+        return int(matches[0])
+    return None
 
 
 def prepare(history: pd.DataFrame) -> pd.DataFrame:
@@ -452,8 +495,14 @@ def find_active_market_cycle(
             continue
 
         rally_low = float(df.iloc[active_pos]["Low"])
+        ftd_pos = follow_through_position(df, follow_through) if follow_through else None
         active_distribution_count = len(
-            active_distribution_positions(df, distribution_positions, pos)
+            active_distribution_positions(
+                df,
+                distribution_positions,
+                pos,
+                min_position=ftd_pos,
+            )
         )
         distribution_reset = (
             follow_through is not None
@@ -536,6 +585,7 @@ def find_follow_through(
                 "gain_pct": float(row["pct_change"]),
                 "required_gain_pct": min_gain_pct,
                 "day_number": day_number,
+                "position": pos,
                 "close": float(row["Close"]),
                 "is_active": not invalidated,
                 "quality": quality,
@@ -616,6 +666,7 @@ def build_follow_through(
         "gain_pct": float(row["pct_change"]),
         "required_gain_pct": min_gain_pct,
         "day_number": day_number,
+        "position": ftd_pos,
         "close": float(row["Close"]),
         "is_active": True,
         "quality": quality,
@@ -652,9 +703,12 @@ def active_distribution_positions(
     df: pd.DataFrame,
     distribution_positions: list[int],
     current_pos: int,
+    min_position: int | None = None,
 ) -> list[int]:
     active = []
     for position in distribution_positions:
+        if min_position is not None and position <= min_position:
+            continue
         age_sessions = current_pos - position
         if age_sessions >= SETTINGS.distribution_window_days:
             continue
@@ -725,6 +779,7 @@ def find_distribution_days(df: pd.DataFrame) -> list[dict[str, Any]]:
                 "change_pct": float(row["pct_change"]),
                 "close": float(row["Close"]),
                 "type": "스톨링" if is_stall else "분산일",
+                "position": absolute_pos,
                 "is_active": is_active,
                 "age_sessions": age_sessions,
                 "expiry_reason": expiry_reason,

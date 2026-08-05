@@ -14,7 +14,7 @@ TAB_LABELS = {
     "risk": "리스크 점검",
 }
 
-APP_VERSION = "ftd-volume-source-v2"
+APP_VERSION = "ftd-post-distribution-v1"
 
 
 def format_number(value: float | int | None, digits: int = 2) -> str:
@@ -136,6 +136,7 @@ def render_market_card(item: dict[str, Any]) -> None:
         st.caption("팔로우쓰루데이: 최근 랠리 시도 이후 확인 안 됨")
     st.caption(
         f"거래량 기준 {item['volume_ticker']} · "
+        f"{item.get('distribution_scope', '최근 25거래일')} · "
         f"최근 11거래일 분산 신호 {item['distribution_cluster_count']}회"
     )
 
@@ -172,7 +173,7 @@ def render_market_card(item: dict[str, Any]) -> None:
                 use_container_width=True,
             )
     else:
-        st.caption("최근 25거래일 내 분산일 없음")
+        st.caption(f"{item.get('distribution_scope', '최근 25거래일')} 분산일 없음")
 
     expired = item.get("expired_distribution_days") or []
     if expired:
@@ -892,6 +893,7 @@ def render_oneil_rules() -> None:
             - **팔로우쓰루데이:** 랠리 4일차 이후 지수가 기준 상승률 이상 오르고 거래량 기준 데이터가 전일보다 증가
             - **상승률 기준:** KOSPI/KOSPI 200/S&P 500은 1.25% 이상, 나스닥종합은 1.70% 이상
             - **거래량 기준:** 한국 지수의 최근 네이버 구간은 Npay 지수 거래량을 우선 사용하고, 미국 지수와 과거 보강 구간은 ETF 대체 거래량을 사용
+            - **분산일 카운트:** 유효한 팔로우쓰루데이가 있으면 그 FTD 이후 발생한 활성 분산일만 현재 상승 국면의 부담으로 계산
             - **신호 유지:** 한 번 확인된 팔로우쓰루데이는 랠리 첫날 저가 하향 돌파 또는 활성 분산 신호 6회 이상 등 소멸 조건이 나오기 전까지 유지
             - **미국시장 확인:** 나스닥종합 또는 S&P 500 중 하나에서 유효 팔로우쓰루데이가 발생하면 인정
             - **신호 평가 - 양호:** 통상적인 4~7일차에 거래량 증가와 함께 발생

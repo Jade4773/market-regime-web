@@ -13,7 +13,7 @@ import requests
 from market_pulse.rules import analyze_index
 
 
-SNAPSHOT_SCHEMA_VERSION = 15
+SNAPSHOT_SCHEMA_VERSION = 16
 
 
 INDEXES = {
