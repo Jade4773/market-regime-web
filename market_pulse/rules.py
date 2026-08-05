@@ -817,8 +817,12 @@ def classify_regime(
         return "주의", max(score, 0), "팔로우쓰루데이 신호를 보수적으로 확인해야 합니다."
     if distribution_clustered:
         return "주의", max(score, 0), "최근 11거래일에 분산일이 집중되어 있습니다."
-    if distribution_count >= SETTINGS.distribution_warning_count or not close_above_ma50:
-        return "주의", max(score, 0), "분산일 누적 또는 50일선 이탈을 확인해야 합니다."
+    if distribution_count >= SETTINGS.distribution_warning_count and not close_above_ma50:
+        return "주의", max(score, 0), "분산일 누적과 50일선 이탈을 함께 확인해야 합니다."
+    if distribution_count >= SETTINGS.distribution_warning_count:
+        return "주의", max(score, 0), "분산일 누적을 확인해야 합니다."
+    if not close_above_ma50:
+        return "주의", max(score, 0), "50일선 이탈을 확인해야 합니다."
     return "매수 우위", min(score, 100), "팔로우쓰루데이 이후 추세와 수급 조건이 우호적입니다."
 
 
