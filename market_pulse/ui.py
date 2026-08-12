@@ -14,7 +14,7 @@ TAB_LABELS = {
     "risk": "리스크 점검",
 }
 
-APP_VERSION = "ftd-post-distribution-v1"
+APP_VERSION = "kis-data-priority-v1"
 
 
 def format_number(value: float | int | None, digits: int = 2) -> str:
@@ -38,6 +38,8 @@ def data_meta_text(item: dict[str, Any]) -> str:
 def data_source_badge(item: dict[str, Any]) -> str:
     source = item.get("data_source", "Yahoo Finance")
     status = item.get("data_status", "마감 기준")
+    if source == "한국투자증권":
+        return f'<span class="source-badge kis">한국투자 · {status}</span>'
     if source == "Npay 증권":
         return f'<span class="source-badge fallback">Npay 대체 · {status}</span>'
     if status == "장중 잠정":
@@ -442,6 +444,10 @@ def dashboard() -> None:
         .source-badge.fallback {
             background:#fff7e8;
             color:#b76b00;
+        }
+        .source-badge.kis {
+            background:#e8f3ff;
+            color:#1b64da;
         }
         .source-badge.provisional {
             background:#fff0f0;

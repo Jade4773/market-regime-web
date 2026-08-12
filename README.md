@@ -13,11 +13,32 @@ https://appapppy-cmks8kxu73qik7iqxaiux4.streamlit.app/
 - NASDAQ Composite
 - S&P 500
 
-Daily price data comes from Yahoo Finance. If Yahoo Finance lags or returns
-empty latest rows for Korean indexes, KOSPI and KOSPI 200 are automatically
-extended with Npay Securities index data and labeled in the UI.
+Daily price data is loaded in this priority order:
 
-ETF volume proxies are used for institutional-volume confirmation:
+1. Korea Investment & Securities Open API, when credentials are configured
+2. Npay Securities for Korean indexes
+3. Yahoo Finance
+
+If Korea Investment credentials are missing or an API call fails, the app
+automatically falls back to Npay/Yahoo and labels the active source in the UI.
+
+For Korea Investment & Securities Open API, add these values to Streamlit
+Secrets or environment variables:
+
+```toml
+KIS_APP_KEY = "..."
+KIS_APP_SECRET = "..."
+KIS_ENV = "prod" # optional: prod or demo
+```
+
+Korea Investment index codes used by the app:
+
+- KOSPI: `0001`
+- KOSPI 200: `2001`
+- NASDAQ Composite: `.IXIC` by default, override with `KIS_IXIC_CODE` if needed
+- S&P 500: `.SPX` by default, override with `KIS_GSPC_CODE` if needed
+
+ETF volume proxies are used when the active source is Yahoo Finance:
 
 - KOSPI / KOSPI 200: `069500.KS`
 - NASDAQ Composite: `QQQ`
