@@ -55,12 +55,27 @@ ETF volume proxies are used when the active source is Yahoo Finance:
 - Separate Korea and U.S. regime summaries
 - A valid follow-through day on either the Nasdaq Composite or S&P 500 can confirm the U.S. rally
 
+## Product Candidates
+
+The `상품 추천` tab shows two rule-based candidate areas:
+
+- Korea Investment & Securities index-linked ELS candidates, when the public
+  subscription screen can be read. If the screen requires a login session or is
+  blocked, the app shows official ELS subscription links instead.
+- ETF candidates derived from the William O'Neil signal already calculated for
+  each index. Candidates are split into Korea-listed ETFs and U.S.-listed ETFs,
+  and include the investment country and tracked or proxy index.
+
+This tab is not personalized investment advice. It does not consider investor
+suitability, account type, tax, FX cost, fees, liquidity, or product risk grade.
+
 ## Project Structure
 
 ```text
 streamlit_app.py        Streamlit Cloud entry point
 market_pulse/
   data.py               Yahoo Finance and Npay Securities data loading
+  products.py           ELS and ETF candidate logic
   rules.py              William O'Neil, trend, risk, and consensus rules
   ui.py                 Streamlit screens, cards, tabs, and styling
   __init__.py           Python package marker

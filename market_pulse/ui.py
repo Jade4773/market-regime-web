@@ -5,6 +5,7 @@ from typing import Any
 import streamlit as st
 
 from market_pulse.data import get_market_snapshot
+from market_pulse.products import build_etf_recommendations, fetch_kis_els_products
 
 
 TAB_LABELS = {
@@ -12,9 +13,15 @@ TAB_LABELS = {
     "oneil": "윌리엄 오닐",
     "trend": "추세/모멘텀",
     "risk": "리스크 점검",
+    "products": "상품 추천",
 }
 
-APP_VERSION = "kis-data-priority-v1"
+APP_VERSION = "product-tab-v1"
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_els_products() -> dict[str, Any]:
+    return fetch_kis_els_products()
 
 
 def format_number(value: float | int | None, digits: int = 2) -> str:
@@ -524,7 +531,7 @@ def dashboard() -> None:
 
 
 def render_market_dashboard() -> None:
-    with st.spinner("야후 파이낸스에서 데이터를 가져오는 중입니다."):
+    with st.spinner("시장 데이터를 가져오는 중입니다."):
         snapshot = get_market_snapshot()
 
     items = list(snapshot["items"].values())
@@ -541,6 +548,8 @@ def render_market_dashboard() -> None:
         render_signal_tab(items, "trend", "추세/모멘텀")
     elif active_tab == "risk":
         render_signal_tab(items, "risk", "리스크 점검")
+    elif active_tab == "products":
+        render_products_tab(snapshot)
 
     st.caption(f"데이터는 최대 {snapshot['cache_seconds']}초 동안 캐시됩니다.")
 
@@ -729,6 +738,134 @@ def render_signal_tab(items: list[dict[str, Any]], signal_key: str, title: str) 
     else:
         with st.expander("리스크 점검 판정 기준", expanded=False):
             render_risk_scoring_guide()
+
+
+def render_products_tab(snapshot: dict[str, Any]) -> None:
+    st.markdown(
+        """
+        <div class="summary-card">
+          <div class="summary-label">규칙 기반 상품 후보</div>
+          <div class="summary-title neutral">상품 추천</div>
+          <p class="summary-copy">
+            한국투자증권 ELS 청약 후보와 윌리엄 오닐식 ETF 매수 후보를 분리해서 확인합니다.
+          </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.warning(
+        "이 탭은 개인별 투자성향, 보유자산, 세금, 환율, 수수료를 반영하지 않은 "
+        "규칙 기반 후보 화면입니다. 실제 청약이나 매수 전에는 투자설명서와 상품 위험등급을 확인해야 합니다."
+    )
+    render_els_products_section()
+    render_etf_recommendation_section(snapshot)
+    render_product_guide()
+
+
+def render_els_products_section() -> None:
+    st.markdown('<div class="section-title">한국투자증권 지수형 ELS</div>', unsafe_allow_html=True)
+    with st.spinner("한국투자증권 ELS 청약 정보를 확인하는 중입니다."):
+        els = get_els_products()
+
+    items = els.get("items", [])
+    if items:
+        st.caption(f"{els.get('status', '한국투자증권 기준')} · 청약 종료로 판독된 항목은 제외")
+        st.dataframe(items, hide_index=True, use_container_width=True)
+    else:
+        st.info(
+            "자동으로 판독 가능한 지수형 ELS 청약 상품이 없습니다. "
+            f"사유: {els.get('status', '확인 불가')}"
+        )
+        st.caption(
+            "한국투자증권 공식 안내상 ELS/DLS 청약 가능 상품은 "
+            "`금융상품 > ELS/DLS > ELS/DLS 거래 > ELS/DLS 청약 > 청약 종목조회/신청`에서 확인합니다."
+        )
+
+    link_cols = st.columns(3)
+    with link_cols[0]:
+        st.link_button("ELS 청약 화면", els.get("source_url"), use_container_width=True)
+    with link_cols[1]:
+        st.link_button("청약 안내", els.get("guide_url"), use_container_width=True)
+    with link_cols[2]:
+        st.link_button("ELS 공지", els.get("notice_url"), use_container_width=True)
+
+
+def render_etf_recommendation_section(snapshot: dict[str, Any]) -> None:
+    st.markdown('<div class="section-title">윌리엄 오닐식 ETF 후보</div>', unsafe_allow_html=True)
+    candidates = build_etf_recommendations(snapshot)
+    if not candidates:
+        st.info(
+            "현재 윌리엄 오닐 기준을 통과한 ETF 매수 후보가 없습니다. "
+            "유효한 팔로우쓰루데이와 낮은 분산일 부담이 함께 확인될 때 후보가 표시됩니다."
+        )
+        return
+
+    for listing in ["국내상장 ETF", "미국상장 ETF"]:
+        listing_candidates = [item for item in candidates if item["listing"] == listing]
+        st.markdown(f"**{listing}**")
+        if not listing_candidates:
+            st.caption("현재 표시할 후보가 없습니다.")
+            continue
+
+        for row_start in range(0, len(listing_candidates), 2):
+            cols = st.columns(2)
+            for col, candidate in zip(cols, listing_candidates[row_start : row_start + 2]):
+                with col:
+                    render_etf_candidate_card(candidate)
+
+
+def render_etf_candidate_card(candidate: dict[str, Any]) -> None:
+    st.markdown(
+        f"""
+        <div class="market-card">
+          <div class="card-head">
+            <div>
+              <h3>{candidate["ticker"]} · {candidate["name"]}</h3>
+              <p>{candidate["listing"]} · 투자국가 {candidate["country"]}</p>
+            </div>
+            <span class="regime-badge" style="{badge_style('매수 우위')}">매수 후보</span>
+          </div>
+          <p class="explain">
+            추종/관찰 지수: {candidate["index"]}<br>
+            기준 시장: {candidate["market"]}<br>
+            {candidate["note"]}
+          </p>
+          <div class="signal-row">
+            <span>오닐 점수</span>
+            <div class="meter"><span style="width:{candidate["score"]}%"></span></div>
+            <strong>{candidate["score"]}</strong>
+          </div>
+          <div class="ftd-line">
+            <span>선정 근거</span><strong>{candidate["basis"]}</strong>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption(f"기준 데이터: {candidate['data_source']} · {candidate['data_status']}")
+
+
+def render_product_guide() -> None:
+    with st.expander("상품 추천 탭 판정 방식", expanded=False):
+        st.markdown(
+            """
+            **1. 한국투자증권 지수형 ELS**
+
+            - 한국투자증권 ELS/DLS 청약 화면에서 청약 가능 상품을 읽어옵니다.
+            - 상품명 또는 기초자산에 `KOSPI`, `S&P`, `NASDAQ`, `EURO STOXX`, `NIKKEI`, `HSCEI` 같은 지수 키워드가 있는 ELS만 지수형으로 분류합니다.
+            - 청약 종료일로 보이는 날짜가 현재 날짜보다 과거이면 목록에서 제외합니다.
+            - 청약 화면이 로그인 세션을 요구하거나 페이지 구조가 바뀌면 자동 판독 대신 공식 청약 화면 바로가기를 보여줍니다.
+
+            **2. ETF 매수 후보**
+
+            - 이 앱에서 이미 계산한 지수별 **윌리엄 오닐 탭 신호**를 사용합니다.
+            - 해당 지수의 오닐 의견이 `매수 우위`이고, 유효한 팔로우쓰루데이가 유지되며, 활성 분산일이 4회 미만일 때만 ETF 후보를 보여줍니다.
+            - 한국상장 ETF와 미국상장 ETF를 나누고, 각 ETF가 투자하는 국가와 추종/관찰 지수를 함께 표시합니다.
+            - 나스닥종합을 직접 추종하는 국내상장 ETF가 제한적이므로, 국내상장 상품은 나스닥100 ETF를 대체 관찰 후보로 표시합니다.
+
+            이 탭의 `추천`은 개인 맞춤 투자권유가 아니라 **규칙을 통과한 관심 후보 표시**입니다.
+            """
+        )
 
 
 def render_trend_scoring_guide() -> None:
