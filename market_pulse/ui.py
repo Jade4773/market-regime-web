@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from html import escape
 from typing import Any
 
 import streamlit as st
 
 from market_pulse.data import get_market_snapshot
-from market_pulse.products import build_etf_recommendations, fetch_kis_els_products
+from market_pulse.products import (
+    build_etf_market_summary,
+    build_etf_recommendations,
+    fetch_kis_els_products,
+)
 
 
 TAB_LABELS = {
@@ -16,7 +21,7 @@ TAB_LABELS = {
     "products": "상품 추천",
 }
 
-APP_VERSION = "leader-etf-top2-v1"
+APP_VERSION = "etf-can-slim-spec-v1"
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -55,16 +60,22 @@ def data_source_badge(item: dict[str, Any]) -> str:
 
 
 def badge_style(regime: str) -> str:
+    if any(word in regime for word in ["매도", "방어", "금지", "조정", "손절"]):
+        return "background:#ffe8e8;color:#d92d35;"
     if "매수" in regime:
         return "background:#e8f3ff;color:#1b64da;"
-    if "중립" in regime or "관망" in regime or "관심" in regime or "대기" in regime:
-        return "background:#eef4fb;color:#4d6f9d;"
     if "주의" in regime:
         return "background:#fff0f0;color:#e5484d;"
-    return "background:#ffe8e8;color:#d92d35;"
+    if any(word in regime for word in ["확인", "압박", "추격"]):
+        return "background:#fff4de;color:#b7791f;"
+    if "중립" in regime or "관망" in regime or "관심" in regime or "대기" in regime:
+        return "background:#eef4fb;color:#4d6f9d;"
+    return "background:#eef4fb;color:#4d6f9d;"
 
 
 def regime_tone(regime: str) -> str:
+    if any(word in regime for word in ["매도", "방어", "금지", "조정", "손절"]):
+        return "negative"
     if "매수" in regime:
         return "positive"
     if "중립" in regime or "관망" in regime or "관심" in regime or "대기" in regime:
@@ -480,6 +491,27 @@ def dashboard() -> None:
         .stat-grid strong { display:block; color:#28466f; font-size:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .ftd-line { background:#f0f6ff; border-radius:8px; padding:13px 14px; margin-top:16px; }
         .ftd-line strong { color:#416b9f; font-size:13px; font-weight:700; }
+        .reason-block {
+            margin-top:16px;
+            padding:14px;
+            border:1px solid #e2ebf7;
+            border-radius:8px;
+            background:#fbfdff;
+            color:#416b9f;
+            font-size:13px;
+            line-height:1.55;
+        }
+        .reason-block strong {
+            display:block;
+            color:#172b4d;
+            font-size:13px;
+            margin:4px 0 6px;
+        }
+        .reason-block ul {
+            margin:0 0 12px 17px;
+            padding:0;
+        }
+        .reason-block ul:last-child { margin-bottom:0; }
         .opinion-list { display:grid; gap:0; margin-top:18px; }
         .opinion-list a {
             display:flex;
@@ -793,41 +825,76 @@ def render_els_products_section() -> None:
 
 
 def render_etf_recommendation_section(snapshot: dict[str, Any]) -> None:
-    st.markdown('<div class="section-title">윌리엄 오닐식 주도 ETF 후보</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">CAN SLIM ETF TOP 2</div>', unsafe_allow_html=True)
+    render_etf_market_status(snapshot)
     candidates = build_etf_recommendations(snapshot)
     if not candidates:
         st.info(
-            "현재 CAN SLIM식 주도 ETF 기준을 통과한 후보가 없습니다. "
-            "시장 FTD, 낮은 분산일 부담, ETF 상대강도 상위권, 매수 위치가 함께 확인될 때 후보가 표시됩니다."
+            "현재 문서 기준을 통과한 주도 ETF 후보가 없습니다. "
+            "FTD가 유지되고, 상대강도 상위권 ETF가 유효 베이스와 피봇 근처에 올 때 후보가 표시됩니다."
         )
         return
 
     st.caption(
-        "후보군 전체를 ETF별 상대강도 원점수로 랭킹한 뒤, CAN SLIM 조건을 통과한 상위 2개만 표시합니다."
+        "점수와 매수 가능 여부를 분리합니다. 점수가 높아도 피봇 돌파와 거래량 확인 전이면 `대기`로 표시합니다."
     )
-    for listing in ["국내상장 ETF", "미국상장 ETF"]:
-        listing_candidates = [item for item in candidates if item["listing"] == listing]
-        st.markdown(f"**{listing}**")
-        if not listing_candidates:
-            st.caption("현재 표시할 후보가 없습니다.")
-            continue
+    cols = st.columns(2)
+    for col, candidate in zip(cols, candidates):
+        with col:
+            render_etf_candidate_card(candidate)
 
-        for row_start in range(0, len(listing_candidates), 2):
-            cols = st.columns(2)
-            for col, candidate in zip(cols, listing_candidates[row_start : row_start + 2]):
-                with col:
-                    render_etf_candidate_card(candidate)
+
+def render_etf_market_status(snapshot: dict[str, Any]) -> None:
+    summaries = build_etf_market_summary(snapshot)
+    cols = st.columns(2)
+    for col, summary in zip(cols, summaries):
+        with col:
+            st.markdown(
+                f"""
+                <div class="region-card">
+                  <div class="region-top">
+                    <span class="region-name">{summary["label"]}</span>
+                    <span class="regime-badge" style="{badge_style(summary["state_label"])}">{summary["state_label"]}</span>
+                  </div>
+                  <div class="stat-grid">
+                    <div><span>Last FTD</span><strong>{summary["ftd"]}</strong></div>
+                    <div><span>분산일</span><strong>{summary["distribution_count"]}</strong></div>
+                    <div><span>추세 위치</span><strong>{summary["nasdaq_position"]}</strong></div>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
+def etf_action_copy(candidate: dict[str, Any]) -> str:
+    status = candidate.get("trading_status")
+    copies = {
+        "BUY_READY": "피봇 돌파와 거래량 확인이 함께 나온 정상 매수 준비 구간입니다.",
+        "PIVOT_APPROACH": "피봇 5% 이내까지 접근했습니다. 돌파와 거래량을 기다립니다.",
+        "BREAKOUT_NEEDS_VOLUME": "피봇은 넘었지만 거래량 확인이 부족해 추격하지 않습니다.",
+        "HOLD": "이미 보유했다면 추세 추적 구간이지만 신규 추격매수는 피합니다.",
+        "EXTENDED": "피봇 대비 +5%를 넘어 신규 진입은 기다립니다.",
+        "FAR_FROM_PIVOT": "아직 피봇과 거리가 있어 선취매보다 관찰이 우선입니다.",
+        "NO_VALID_BASE": "유효 베이스가 아직 부족해 매수 후보로 보지 않습니다.",
+        "BROKEN": "50일선 아래라 신규 매수는 금지합니다.",
+        "MARKET_WAIT": "시장 허가 조건이 약해 ETF 신규 매수는 보류합니다.",
+        "SELL_WARNING": "단기 추세 훼손 가능성이 있어 보유분 방어를 점검합니다.",
+    }
+    return copies.get(status, "관찰 후보입니다. 피봇과 거래량 확인이 필요합니다.")
 
 
 def render_etf_candidate_card(candidate: dict[str, Any]) -> None:
-    label = candidate.get("leader_label", candidate["action"])
+    label = candidate.get("action", candidate.get("leader_label", "관찰"))
+    positive_list = "".join(f"<li>{escape(reason)}</li>" for reason in candidate["positive_reasons"])
+    risk_list = "".join(f"<li>{escape(reason)}</li>" for reason in candidate["risk_signals"])
     st.markdown(
         f"""
         <div class="market-card">
           <div class="card-head">
             <div>
-              <h3>{candidate["ticker"]} · {candidate["name"]}</h3>
-              <p>{candidate["listing"]} · 투자국가 {candidate["country"]}</p>
+              <h3>#{candidate.get("display_rank", candidate["leader_rank"])} {candidate["ticker"]} · {candidate["name"]}</h3>
+              <p>{candidate["listing"]} · 투자국가 {candidate["country"]} · {candidate["index"]}</p>
             </div>
             <span class="regime-badge" style="{badge_style(label)}">{label}</span>
           </div>
@@ -836,39 +903,52 @@ def render_etf_candidate_card(candidate: dict[str, Any]) -> None:
             <span class="{'up' if candidate["change_pct"] >= 0 else 'down'}">{format_pct(candidate["change_pct"])}</span>
           </div>
           <p class="explain">
-            추종/관찰 지수: {candidate["index"]}<br>
-            기준 시장: {candidate["market"]}<br>
+            <strong>{etf_action_copy(candidate)}</strong><br>
+            기준 시장: {candidate["market"]} · {candidate["market_state_label"]}<br>
             {candidate["note"]}
           </p>
           <div class="signal-row">
-            <span>CAN SLIM 점수</span>
+            <span>ETF CAN SLIM Score</span>
             <div class="meter"><span style="width:{candidate["can_slim_score"]}%"></span></div>
             <strong>{candidate["can_slim_score"]}</strong>
           </div>
           <div class="stat-grid">
-            <div><span>상대강도 순위</span><strong>{candidate["leader_rank"]}위/{candidate["leader_percentile"]}</strong></div>
-            <div><span>현재 타이밍</span><strong>{candidate["action"]}</strong></div>
-            <div><span>3개월 수익률</span><strong>{format_pct(candidate["return63"])}</strong></div>
+            <div><span>Action</span><strong>{candidate["action"]}</strong></div>
+            <div><span>상대강도</span><strong>{candidate["leader_rank"]}위 · {candidate["leader_percentile"]}</strong></div>
+            <div><span>60일 수익률</span><strong>{format_pct(candidate["return60"])}</strong></div>
           </div>
           <div class="ftd-line">
-            <span>선정 근거</span><strong>{candidate["basis"]}</strong>
+            <span>피봇</span><strong>{format_number(candidate["pivot"])} · 거리 {format_pct(candidate["pivot_distance_pct"])}</strong>
           </div>
           <div class="ftd-line">
             <span>매수 가능 구간</span>
-            <strong>{format_number(candidate["buy_low"])} ~ {format_number(candidate["buy_high"])} · 기준가 대비 +5% 이내</strong>
+            <strong>{format_number(candidate["buy_low"])} ~ {format_number(candidate["buy_high"])} · 거래량 {candidate["volume_ratio"]:.2f}배</strong>
           </div>
           <div class="ftd-line">
-            <span>매도/방어 기준</span>
-            <strong>{candidate["sell_signal"]} · 손절 기준 {format_number(candidate["stop_loss"])} · 이익보호 {format_number(candidate["profit_low"])}~{format_number(candidate["profit_high"])}</strong>
+            <span>21EMA / 50일선</span>
+            <strong>{format_number(candidate["ma21"])} / {format_number(candidate["ma50"])}</strong>
+          </div>
+          <div class="ftd-line">
+            <span>매도/방어</span>
+            <strong>{candidate["sell_signal"]} · 손절 {format_number(candidate["stop_loss"])}</strong>
+          </div>
+          <div class="reason-block">
+            <strong>Why Selected</strong>
+            <ul>{positive_list}</ul>
+            <strong>Risk Signals</strong>
+            <ul>{risk_list}</ul>
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
     component_text = " · ".join(
-        f"{name} {score}점" for name, score in candidate["components"].items()
+        f"{name} {candidate['components'].get(name, 0)}점"
+        for name in ["M 시장 방향", "L 상대강도", "추세", "베이스/피봇", "유동성"]
     )
-    st.caption(f"{component_text} · 기준 데이터: {candidate['data_source']} · {candidate['data_status']}")
+    st.caption(
+        f"{component_text} · ETF 가격/거래량: {candidate['data_source']} · 지수 판단: {candidate['data_status']}"
+    )
 
 
 def render_product_guide() -> None:
@@ -884,18 +964,27 @@ def render_product_guide() -> None:
             - 청약 종료일로 보이는 날짜가 현재 날짜보다 과거이면 목록에서 제외합니다.
             - 청약 화면이 로그인 세션을 요구하거나 페이지 구조가 바뀌면 자동 판독 대신 공식 청약 화면 바로가기를 보여줍니다.
 
-            **2. ETF 매수 후보**
+            **2. CAN SLIM ETF TOP 2**
 
-            - **M - Market Direction:** 해당 시장의 유효 팔로우쓰루데이가 유지되고, 활성 분산일이 4회 미만일 때만 후보를 계산합니다.
-            - **L - Leader/Relative Strength:** S&P 500, 나스닥100, 반도체, 소프트웨어, 섹터, 국가 ETF 후보군 전체를 비교해 상대강도 상위권만 남깁니다.
-            - **주도 ETF 판정:** 3개월·6개월·12개월 수익률과 52주 고점 근접도를 합산해 상대강도 원점수를 만들고, ETF 후보군 안에서 순위를 매깁니다.
-            - **기술적 매수 위치:** ETF가 50일선·200일선 위에 있고, 최근 11주 고점 돌파 기준가부터 +5% 이내면 `매수 후보`로 봅니다.
-            - **유동성:** 50일 평균 거래량이 최소 기준을 넘는지 봅니다.
-            - **매도/방어:** 기준가 대비 -7~8% 손절, 거래량 동반 50일선 이탈, 시장 분산일 누적, 20~25% 이익보호 구간을 함께 표시합니다.
-            - 한국상장 ETF와 미국상장 ETF를 나누고, 각 ETF가 투자하는 국가와 추종/관찰 지수를 함께 표시합니다.
-            - 광범위 대표지수 ETF보다 섹터·테마·국가 ETF의 상대강도가 높으면 그 ETF가 먼저 표시됩니다.
+            ETF는 붙임 문서의 `ETF CAN SLIM Score` 방식에 맞춰 100점 만점으로 계산합니다.
+            단, **점수가 높다는 것과 지금 매수 가능하다는 것은 분리**해서 보여줍니다.
 
-            이 탭의 `추천`은 개인 맞춤 투자권유가 아니라 **규칙을 통과한 관심 후보 표시**입니다.
+            - **M 시장 방향 20점:** 유효 FTD가 있고 분산일이 제한적이면 20점, 상승장이지만 압박을 받으면 10점, 조정장이면 0점입니다.
+            - **L 상대강도 30점:** ETF 후보군 전체에서 20일·60일·120일 수익률 백분위를 계산합니다. 20일 10점, 60일 12점, 120일 8점으로 최근 강도를 더 크게 반영합니다.
+            - **추세 20점:** 가격이 21EMA 위면 6점, 50일선 위면 7점, 50일선이 상승 중이면 4점, 200일선 위면 3점입니다.
+            - **베이스/피봇 25점:** 25거래일 이상 베이스, 15% 이하 깊이, 피봇 -5% 이내 접근, 피봇 돌파, 돌파 시 거래량 1.4배 이상을 봅니다.
+            - **유동성 5점:** 50일 평균 거래량이 ETF별 최소 기준을 넘으면 3점, 충분히 크면 5점입니다.
+
+            **Action 판정**
+
+            - **매수준비:** 상승장 확인, 피봇~피봇+5% 구간, 거래량 1.4배 이상이 함께 확인될 때입니다.
+            - **피봇 접근:** 피봇보다 0~5% 아래에 있어 돌파와 거래량을 기다리는 상태입니다.
+            - **거래량 확인:** 피봇은 넘었지만 거래량이 부족해 아직 확정 매수로 보지 않습니다.
+            - **추격금지/보유:** 피봇보다 +5% 이상 높습니다. 이미 보유했다면 추세 추적, 신규 매수는 보류입니다.
+            - **관찰/피봇 대기:** 유효 베이스가 부족하거나 피봇과 거리가 멀어 선취매하지 않는 상태입니다.
+            - **매수금지/관망:** 50일선 아래이거나 시장이 조정장일 때입니다.
+
+            이 탭의 후보는 개인 맞춤 투자권유가 아니라 **가장 강한 ETF가 무엇인지**와 **그 ETF를 지금 사도 되는지**를 분리해 보여주는 규칙 기반 관심 목록입니다.
             """
         )
 

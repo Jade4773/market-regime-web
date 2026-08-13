@@ -53,6 +53,7 @@ def etf_candidate(
     index: str,
     note: str,
     min_avg_volume: int,
+    category: str | None = None,
 ) -> dict[str, Any]:
     return {
         "market_group": market_group,
@@ -65,6 +66,7 @@ def etf_candidate(
         "index": index,
         "note": note,
         "min_avg_volume": min_avg_volume,
+        "category": category,
     }
 
 
@@ -83,6 +85,7 @@ ETF_CANDIDATES = [
     etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="SPY", yahoo_ticker="SPY", name="SPDR S&P 500 ETF Trust", country="미국", index="S&P 500", note="미국 대형주 대표지수", min_avg_volume=100000),
     etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="VOO", yahoo_ticker="VOO", name="Vanguard S&P 500 ETF", country="미국", index="S&P 500", note="미국 대형주 대표지수", min_avg_volume=100000),
     etf_candidate(market_group="us", signal_key="nasdaq_composite", listing="미국상장 ETF", ticker="QQQ", yahoo_ticker="QQQ", name="Invesco QQQ Trust", country="미국", index="NASDAQ 100", note="나스닥 대형 성장주", min_avg_volume=100000),
+    etf_candidate(market_group="us", signal_key="nasdaq_composite", listing="미국상장 ETF", ticker="QQQM", yahoo_ticker="QQQM", name="Invesco NASDAQ 100 ETF", country="미국", index="NASDAQ 100", note="나스닥 성장주 핵심 ETF", min_avg_volume=100000),
     etf_candidate(market_group="us", signal_key="nasdaq_composite", listing="미국상장 ETF", ticker="ONEQ", yahoo_ticker="ONEQ", name="Fidelity Nasdaq Composite ETF", country="미국", index="Nasdaq Composite", note="나스닥종합 직접 추종", min_avg_volume=20000),
     etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="IWM", yahoo_ticker="IWM", name="iShares Russell 2000 ETF", country="미국", index="Russell 2000", note="미국 중소형주 주도 여부 확인", min_avg_volume=100000),
     etf_candidate(market_group="us", signal_key="nasdaq_composite", listing="미국상장 ETF", ticker="SMH", yahoo_ticker="SMH", name="VanEck Semiconductor ETF", country="미국", index="Semiconductors", note="반도체 주도 업종", min_avg_volume=100000),
@@ -406,20 +409,17 @@ def build_etf_recommendations(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     analyzed_candidates = []
 
     for candidate in ETF_CANDIDATES:
-        market_item = market_gates.get(candidate["market_group"])
-        if not market_item:
+        market_gate = market_gates.get(candidate["market_group"])
+        if not market_gate:
             continue
+        market_item = market_gate["item"]
         benchmark_item = items.get(candidate["signal_key"]) or market_item
         if benchmark_item.get("error"):
             continue
 
-        oneil = market_item.get("signals", {}).get("oneil", {})
-        follow_through = market_item.get("follow_through")
         analyzed = analyze_etf_candidate(
             candidate,
-            market_item,
-            oneil,
-            follow_through,
+            market_gate,
             benchmark_item,
         )
         if analyzed:
@@ -430,25 +430,66 @@ def build_etf_recommendations(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         item
         for item in ranked
         if item["leader_rank"] <= 12
-        and item["can_slim_score"] >= 68
-        and item["relative_strength_score"] >= 60
-        and item["action"] != "매도/방어"
+        and item["can_slim_score"] >= 60
+        and item["leader_percentile"] >= 65
+        and item["components"]["유동성"] > 0
+        and item["trading_status"] not in {"SELL", "BROKEN"}
     ]
 
-    return sorted(
+    selected = sorted(
         leaders,
         key=lambda item: (
+            item["action_rank"],
+            -item["can_slim_score"],
             item["leader_rank"],
-            -item["relative_strength_score"],
             item["ticker"],
         ),
     )[:2]
+    for display_rank, item in enumerate(selected, start=1):
+        item["display_rank"] = display_rank
+    return selected
+
+
+def build_etf_market_summary(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    gates = build_market_gates(snapshot.get("items", {}))
+    return [
+        summarize_market_gate("미국 시장", gates.get("us")),
+        summarize_market_gate("한국 시장", gates.get("korea")),
+    ]
+
+
+def summarize_market_gate(label: str, gate: dict[str, Any] | None) -> dict[str, Any]:
+    if not gate:
+        return {
+            "label": label,
+            "state": "MARKET_CORRECTION",
+            "state_label": "관망",
+            "ftd": "-",
+            "distribution_count": "-",
+            "nasdaq_position": "-",
+        }
+
+    item = gate["item"]
+    trend_metrics = item.get("signals", {}).get("trend", {}).get("metrics", {})
+    follow_through = item.get("follow_through") or {}
+    return {
+        "label": label,
+        "state": gate["state"],
+        "state_label": gate["state_label"],
+        "ftd": follow_through.get("date", "최근 FTD 없음"),
+        "distribution_count": item.get("distribution_count", 0),
+        "nasdaq_position": (
+            "50일선 위"
+            if numeric_or_zero(trend_metrics.get("50일선")) < numeric_or_zero(item.get("close"))
+            else "50일선 아래/확인 필요"
+        ),
+    }
 
 
 def build_market_gates(items: dict[str, Any]) -> dict[str, dict[str, Any]]:
     gates = {}
-    korea = best_valid_market(items, ["kospi200", "kospi"])
-    united_states = best_valid_market(items, ["sp500", "nasdaq_composite"])
+    korea = best_market_gate(items, ["kospi200", "kospi"])
+    united_states = best_market_gate(items, ["nasdaq_composite", "sp500"])
     if korea:
         gates["korea"] = korea
     if united_states:
@@ -456,7 +497,7 @@ def build_market_gates(items: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return gates
 
 
-def best_valid_market(items: dict[str, Any], keys: list[str]) -> dict[str, Any] | None:
+def best_market_gate(items: dict[str, Any], keys: list[str]) -> dict[str, Any] | None:
     valid = []
     for key in keys:
         item = items.get(key)
@@ -464,63 +505,126 @@ def best_valid_market(items: dict[str, Any], keys: list[str]) -> dict[str, Any] 
             continue
         oneil = item.get("signals", {}).get("oneil", {})
         follow_through = item.get("follow_through")
-        if qualifies_oneil_buy(item, oneil, follow_through):
-            valid.append(item)
+        state, score, label = market_state(item, oneil, follow_through)
+        valid.append({"item": item, "state": state, "score": score, "state_label": label})
     if not valid:
         return None
     return sorted(
         valid,
-        key=lambda item: (
-            -item.get("signals", {}).get("oneil", {}).get("score", 0),
-            item.get("distribution_count", 99),
-            item.get("name", ""),
+        key=lambda gate: (
+            -gate["score"],
+            gate["item"].get("distribution_count", 99),
+            gate["item"].get("name", ""),
         ),
     )[0]
+
+
+def market_state(
+    item: dict[str, Any],
+    oneil: dict[str, Any],
+    follow_through: dict[str, Any] | None,
+) -> tuple[str, int, str]:
+    if not follow_through or not follow_through.get("is_active"):
+        return "MARKET_CORRECTION", 0, "조정장"
+    if oneil.get("opinion") == "매도/방어" or item.get("distribution_count", 0) >= 6:
+        return "MARKET_CORRECTION", 0, "조정장"
+    if item.get("distribution_count", 0) >= 3 or oneil.get("opinion") == "주의":
+        return "UPTREND_UNDER_PRESSURE", 10, "상승장 압박"
+    return "CONFIRMED_UPTREND", 20, "상승장 확인"
 
 
 def rank_etf_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not candidates:
         return []
 
-    scores = sorted(item["relative_strength_score"] for item in candidates)
-    total = len(scores)
+    assign_relative_strength_components(candidates)
     for item in candidates:
-        weaker_or_equal = sum(1 for score in scores if score <= item["relative_strength_score"])
-        percentile = round(weaker_or_equal / total * 99)
-        item["leader_percentile"] = percentile
-        item["components"]["ETF 상대강도 순위"] = percentile
+        finalize_etf_candidate(item)
 
     ranked = sorted(
         candidates,
         key=lambda item: (
             -item["leader_percentile"],
             -item["can_slim_score"],
+            item["action_rank"],
             item["ticker"],
         ),
     )
     for rank, item in enumerate(ranked, start=1):
         item["leader_rank"] = rank
         item["leader_label"] = leader_label(item)
-    return ranked[:18]
+    return ranked
+
+
+def assign_relative_strength_components(candidates: list[dict[str, Any]]) -> None:
+    for period_key, score_key, max_points in [
+        ("return20", "20일 상대강도", 10),
+        ("return60", "60일 상대강도", 12),
+        ("return120", "120일 상대강도", 8),
+    ]:
+        values = sorted(item[period_key] for item in candidates)
+        total = len(values)
+        for item in candidates:
+            percentile = percentile_rank(values, item[period_key], total)
+            item[f"{period_key}_percentile"] = percentile
+            item["components"][score_key] = round(percentile / 99 * max_points)
+
+
+def percentile_rank(values: list[float], value: float, total: int) -> int:
+    if total <= 1:
+        return 99
+    weaker_or_equal = sum(1 for candidate_value in values if candidate_value <= value)
+    return round(weaker_or_equal / total * 99)
+
+
+def finalize_etf_candidate(item: dict[str, Any]) -> None:
+    rs_score = (
+        item["components"]["20일 상대강도"]
+        + item["components"]["60일 상대강도"]
+        + item["components"]["120일 상대강도"]
+    )
+    item["relative_strength_score"] = rs_score
+    item["leader_percentile"] = round(
+        item["return20_percentile"] * 0.35
+        + item["return60_percentile"] * 0.40
+        + item["return120_percentile"] * 0.25
+    )
+    item["components"]["L 상대강도"] = rs_score
+    item["components"]["추세"] = trend_score(item)
+    item["components"]["베이스/피봇"] = base_pivot_score(item)
+    item["components"]["유동성"] = liquidity_score(item)
+    item["can_slim_score"] = (
+        item["components"]["M 시장 방향"]
+        + item["components"]["L 상대강도"]
+        + item["components"]["추세"]
+        + item["components"]["베이스/피봇"]
+        + item["components"]["유동성"]
+    )
+    trading_status, action, action_rank = etf_trading_status(item)
+    item["trading_status"] = trading_status
+    item["action"] = action
+    item["action_rank"] = action_rank
+    item["sell_signal"] = current_sell_signal(item)
+    item["positive_reasons"], item["risk_signals"] = etf_reasons(item)
 
 
 def leader_label(item: dict[str, Any]) -> str:
-    if item["action"] == "매도/방어":
+    if item["trading_status"] in {"SELL", "BROKEN"}:
         return "방어"
-    if item["leader_rank"] <= 5:
+    if item["trading_status"] == "BUY_READY":
+        return "매수준비"
+    if item["trading_status"] == "PIVOT_APPROACH":
+        return "피봇 접근"
+    if item["leader_rank"] <= 5 and item["leader_percentile"] >= 75:
         return "주도 ETF"
-    if item["leader_rank"] <= 8 and item["action"] in {"매수 후보", "관심/대기"}:
+    if item["leader_rank"] <= 8:
         return "주도 후보"
-    if item["action"] == "추격 주의":
-        return "추격 주의"
     return item["action"]
 
 
 def analyze_etf_candidate(
     candidate: dict[str, Any],
-    market_item: dict[str, Any],
-    oneil: dict[str, Any],
-    follow_through: dict[str, Any] | None,
+    market_gate: dict[str, Any],
     benchmark_item: dict[str, Any],
 ) -> dict[str, Any] | None:
     try:
@@ -530,85 +634,83 @@ def analyze_etf_candidate(
     if len(df) < 220:
         return None
 
+    market_item = market_gate["item"]
     latest = df.iloc[-1]
     previous = df.iloc[-2]
     close = float(latest["Close"])
+    ma21 = float(latest["ema21"]) if pd.notna(latest["ema21"]) else None
     ma50 = float(latest["ma50"]) if pd.notna(latest["ma50"]) else None
     ma200 = float(latest["ma200"]) if pd.notna(latest["ma200"]) else None
-    pivot = float(latest["pivot55"]) if pd.notna(latest["pivot55"]) else None
+    ma50_slope = float(latest["ma50_slope20"]) if pd.notna(latest["ma50_slope20"]) else 0.0
+    base = detect_flat_base(df)
+    pivot = base.get("pivot")
+    pivot_distance_pct = pct(close, pivot) if pivot else None
+    avg_volume20 = float(latest["avg_volume20"]) if pd.notna(latest["avg_volume20"]) else 0.0
     avg_volume50 = float(latest["avg_volume50"]) if pd.notna(latest["avg_volume50"]) else 0.0
+    volume_ratio = float(latest["Volume"] / avg_volume20) if avg_volume20 else 0.0
     volume_change = pct(latest["Volume"], previous["Volume"])
-    return63 = float(latest["return63"]) if pd.notna(latest["return63"]) else 0.0
-    return126 = float(latest["return126"]) if pd.notna(latest["return126"]) else 0.0
-    return252 = float(latest["return252"]) if pd.notna(latest["return252"]) else 0.0
+    return20 = float(latest["return20"]) if pd.notna(latest["return20"]) else 0.0
+    return60 = float(latest["return60"]) if pd.notna(latest["return60"]) else 0.0
+    return120 = float(latest["return120"]) if pd.notna(latest["return120"]) else 0.0
     distance_high252 = (
         float(latest["distance_high252"]) if pd.notna(latest["distance_high252"]) else None
     )
 
     benchmark_metrics = benchmark_item.get("signals", {}).get("trend", {}).get("metrics", {})
-    benchmark_return63 = numeric_or_zero(benchmark_metrics.get("3개월 수익률"))
-    benchmark_return126 = numeric_or_zero(benchmark_metrics.get("6개월 수익률"))
-
-    components = score_can_slim_etf(
-        close=close,
-        ma50=ma50,
-        ma200=ma200,
-        pivot=pivot,
-        return63=return63,
-        return126=return126,
-        benchmark_return63=benchmark_return63,
-        benchmark_return126=benchmark_return126,
-        distance_high252=distance_high252,
-        avg_volume50=avg_volume50,
-        min_avg_volume=float(candidate.get("min_avg_volume", 0)),
-    )
-    raw_rs_score = relative_strength_score(
-        return63=return63,
-        return126=return126,
-        return252=return252,
-        distance_high252=distance_high252,
-    )
-    score = sum(components.values())
-    action = etf_action(score, close, pivot)
-    sell_signal = current_sell_signal(market_item, close, ma50, pivot, latest, avg_volume50)
-    if "매도" in sell_signal or "방어" in sell_signal:
-        action = "매도/방어"
-
+    benchmark_return60 = numeric_or_zero(benchmark_metrics.get("3개월 수익률"))
+    benchmark_return120 = numeric_or_zero(benchmark_metrics.get("6개월 수익률"))
+    follow_through = market_item.get("follow_through")
     ftd_text = f"{follow_through['date']} FTD" if follow_through else "FTD 확인 필요"
+    buy_high = pivot * 1.05 if pivot else None
     return {
         **candidate,
+        "category": candidate.get("category") or infer_etf_category(candidate),
         "market": market_item["name"],
         "benchmark_market": benchmark_item["name"],
-        "opinion": oneil.get("opinion", "-"),
-        "can_slim_score": score,
-        "components": components,
-        "action": action,
+        "market_state": market_gate["state"],
+        "market_state_label": market_gate["state_label"],
+        "opinion": market_item.get("signals", {}).get("oneil", {}).get("opinion", "-"),
+        "can_slim_score": 0,
+        "components": {"M 시장 방향": market_gate["score"]},
+        "action": "관찰",
+        "trading_status": "WATCH",
+        "action_rank": 9,
         "last_price": close,
         "change_pct": float(latest["pct_change"]) if pd.notna(latest["pct_change"]) else 0.0,
-        "return63": return63,
-        "return126": return126,
-        "return252": return252,
-        "rs_vs_market63": return63 - benchmark_return63,
-        "rs_vs_market126": return126 - benchmark_return126,
-        "relative_strength_score": raw_rs_score,
+        "return20": return20,
+        "return60": return60,
+        "return120": return120,
+        "rs_vs_market60": return60 - benchmark_return60,
+        "rs_vs_market120": return120 - benchmark_return120,
+        "relative_strength_score": 0,
         "leader_percentile": 0,
         "leader_rank": 999,
-        "leader_label": action,
+        "leader_label": "관찰",
+        "ma21": ma21,
         "ma50": ma50,
         "ma200": ma200,
+        "ma50_slope": ma50_slope,
         "pivot": pivot,
+        "pivot_distance_pct": pivot_distance_pct,
         "buy_low": pivot,
-        "buy_high": pivot * 1.05 if pivot else None,
+        "buy_high": buy_high,
         "stop_loss": pivot * 0.92 if pivot else None,
         "profit_low": pivot * 1.20 if pivot else None,
         "profit_high": pivot * 1.25 if pivot else None,
+        "base_exists": base["base_exists"],
+        "base_days": base["base_days"],
+        "base_depth_pct": base["base_depth_pct"],
+        "near_pivot": pivot_distance_pct is not None and -5 <= pivot_distance_pct <= 5,
+        "breakout": pivot_distance_pct is not None and pivot_distance_pct >= 0,
+        "volume_ratio": volume_ratio,
+        "avg_volume20": avg_volume20,
         "avg_volume50": avg_volume50,
         "volume_change_pct": volume_change,
-        "sell_signal": sell_signal,
+        "sell_signal": "관찰",
         "basis": (
-            f"{market_item['name']} {oneil.get('opinion', '-')}, {ftd_text}, "
+            f"{market_item['name']} {market_gate['state_label']}, {ftd_text}, "
             f"활성 분산일 {market_item.get('distribution_count', 0)}회, "
-            f"{benchmark_item['name']} 대비 ETF 상대강도 원점수 {raw_rs_score}점"
+            f"{benchmark_item['name']} 대비 60일 초과수익 {return60 - benchmark_return60:+.2f}%"
         ),
         "data_source": "Yahoo Finance ETF 가격",
         "data_status": market_item.get("data_status", "-"),
@@ -618,122 +720,207 @@ def analyze_etf_candidate(
 def prepare_etf_history(history: pd.DataFrame) -> pd.DataFrame:
     df = history.sort_index().copy()
     df["pct_change"] = df["Close"].pct_change() * 100
+    df["ema21"] = df["Close"].ewm(span=21, adjust=False).mean()
     df["ma20"] = df["Close"].rolling(20).mean()
     df["ma50"] = df["Close"].rolling(50).mean()
     df["ma200"] = df["Close"].rolling(200).mean()
+    df["ma50_slope20"] = df["ma50"].pct_change(20) * 100
+    df["avg_volume20"] = df["Volume"].rolling(20).mean()
     df["avg_volume50"] = df["Volume"].rolling(50).mean()
-    df["return63"] = df["Close"].pct_change(63) * 100
-    df["return126"] = df["Close"].pct_change(126) * 100
+    df["return20"] = df["Close"].pct_change(20) * 100
+    df["return60"] = df["Close"].pct_change(60) * 100
+    df["return120"] = df["Close"].pct_change(120) * 100
     df["return252"] = df["Close"].pct_change(252) * 100
     df["high252"] = df["Close"].rolling(252).max()
     df["distance_high252"] = (df["Close"] / df["high252"] - 1) * 100
-    # Recent 11-week closing high is a practical ETF proxy for an O'Neil-style pivot.
-    df["pivot55"] = df["Close"].shift(1).rolling(55).max()
     return df
 
 
-def relative_strength_score(
-    *,
-    return63: float,
-    return126: float,
-    return252: float,
-    distance_high252: float | None,
-) -> int:
-    score = 0
-    if return63 > 0:
-        score += min(30, max(0, int(return63 * 1.2)))
-    if return126 > 0:
-        score += min(30, max(0, int(return126 * 0.8)))
-    if return252 > 0:
-        score += min(25, max(0, int(return252 * 0.35)))
-    if distance_high252 is not None:
-        if distance_high252 >= -5:
-            score += 15
-        elif distance_high252 >= -10:
-            score += 10
-        elif distance_high252 >= -15:
-            score += 5
-    return min(score, 100)
+def detect_flat_base(df: pd.DataFrame) -> dict[str, Any]:
+    base_days = 25
+    window = df.iloc[-base_days - 1 : -1]
+    if len(window) < base_days:
+        return {"base_exists": False, "base_days": base_days, "base_depth_pct": None, "pivot": None}
 
-
-def score_can_slim_etf(
-    *,
-    close: float,
-    ma50: float | None,
-    ma200: float | None,
-    pivot: float | None,
-    return63: float,
-    return126: float,
-    benchmark_return63: float,
-    benchmark_return126: float,
-    distance_high252: float | None,
-    avg_volume50: float,
-    min_avg_volume: float,
-) -> dict[str, int]:
-    trend_score = 0
-    if ma50 and close > ma50:
-        trend_score += 10
-    if ma200 and close > ma200:
-        trend_score += 8
-    if ma50 and ma200 and ma50 > ma200:
-        trend_score += 7
-
-    rs_score = 0
-    if return63 > benchmark_return63:
-        rs_score += 10
-    if return126 > benchmark_return126:
-        rs_score += 10
-
-    position_score = 0
-    if pivot and pivot <= close <= pivot * 1.05:
-        position_score = 20
-    elif pivot and pivot * 0.95 <= close < pivot:
-        position_score = 14
-    elif pivot and close > pivot * 1.05:
-        position_score = 8
-    elif distance_high252 is not None and distance_high252 >= -15:
-        position_score = 8
-
-    liquidity_score = 10 if avg_volume50 >= min_avg_volume else 5
-
+    base_high = float(window["High"].max())
+    base_low = float(window["Low"].min())
+    latest = df.iloc[-1]
+    close = float(latest["Close"])
+    ma50 = float(latest["ma50"]) if pd.notna(latest["ma50"]) else None
+    base_depth_pct = (base_high / base_low - 1) * 100 if base_low else None
+    upper_half = close >= base_low + (base_high - base_low) * 0.5
+    near_50ma = ma50 is not None and close >= ma50 * 0.97
+    volatility_contracting = volatility_is_contracting(df)
+    base_exists = bool(
+        base_depth_pct is not None
+        and base_depth_pct <= 15
+        and near_50ma
+        and upper_half
+        and volatility_contracting
+    )
     return {
-        "M 시장 방향": 25,
-        "L 상대강도": rs_score,
-        "추세 템플릿": trend_score,
-        "매수 위치": position_score,
-        "유동성": liquidity_score,
+        "base_exists": base_exists,
+        "base_days": base_days,
+        "base_depth_pct": base_depth_pct,
+        "pivot": base_high,
     }
 
 
-def etf_action(score: int, close: float, pivot: float | None) -> str:
-    if pivot and pivot <= close <= pivot * 1.05 and score >= 80:
-        return "매수 후보"
-    if pivot and close > pivot * 1.05 and score >= 75:
-        return "추격 주의"
-    if score >= 65:
-        return "관심/대기"
-    return "제외"
+def volatility_is_contracting(df: pd.DataFrame) -> bool:
+    ranges = ((df["High"] - df["Low"]) / df["Close"]).dropna()
+    if len(ranges) < 45:
+        return True
+    recent = ranges.iloc[-10:].mean()
+    previous = ranges.iloc[-35:-10].mean()
+    return bool(recent <= previous * 1.15)
 
 
-def current_sell_signal(
-    market_item: dict[str, Any],
-    close: float,
-    ma50: float | None,
-    pivot: float | None,
-    latest: pd.Series,
-    avg_volume50: float,
-) -> str:
-    if market_item.get("regime") == "매도/방어" or market_item.get("distribution_count", 0) >= 6:
-        return "시장 매도/방어 신호"
+def trend_score(item: dict[str, Any]) -> int:
+    score = 0
+    if item["ma21"] and item["last_price"] > item["ma21"]:
+        score += 6
+    if item["ma50"] and item["last_price"] > item["ma50"]:
+        score += 7
+    if item["ma50_slope"] > 0:
+        score += 4
+    if item["ma200"] and item["last_price"] > item["ma200"]:
+        score += 3
+    return score
+
+
+def base_pivot_score(item: dict[str, Any]) -> int:
+    score = 0
+    if item["base_exists"]:
+        score += 5
+    if item["base_days"] >= 25:
+        score += 4
+    if item["base_depth_pct"] is not None and item["base_depth_pct"] <= 15:
+        score += 4
+    if item["pivot_distance_pct"] is not None and item["pivot_distance_pct"] >= -5:
+        score += 4
+    if item["breakout"]:
+        score += 4
+    if item["breakout"] and item["volume_ratio"] >= 1.4:
+        score += 4
+    return score
+
+
+def liquidity_score(item: dict[str, Any]) -> int:
+    minimum = float(item.get("min_avg_volume", 0))
+    if minimum <= 0:
+        return 0
+    if item["avg_volume50"] >= minimum * 3:
+        return 5
+    if item["avg_volume50"] >= minimum:
+        return 3
+    return 0
+
+
+def etf_trading_status(item: dict[str, Any]) -> tuple[str, str, int]:
+    close = item["last_price"]
+    pivot = item["pivot"]
+    ma50 = item["ma50"]
+    ma21 = item["ma21"]
+    pivot_distance = item["pivot_distance_pct"]
+    market_state_value = item["market_state"]
+    heavy_volume = item["volume_ratio"] >= 1.2
+
+    if market_state_value == "MARKET_CORRECTION":
+        return "MARKET_WAIT", "관망", 8
+    if ma50 and close < ma50:
+        return "BROKEN", "매수금지", 7
+    if not item["base_exists"] or not pivot:
+        return "NO_VALID_BASE", "관찰", 6
+    if pivot_distance is not None and pivot_distance < -5:
+        return "FAR_FROM_PIVOT", "피봇 대기", 5
+    if pivot_distance is not None and -5 <= pivot_distance < 0:
+        return "PIVOT_APPROACH", "피봇 접근", 2
+    if pivot_distance is not None and 0 <= pivot_distance <= 5:
+        if item["volume_ratio"] >= 1.4 and market_state_value == "CONFIRMED_UPTREND":
+            return "BUY_READY", "매수준비", 1
+        return "BREAKOUT_NEEDS_VOLUME", "거래량 확인", 3
+    if pivot_distance is not None and pivot_distance > 5:
+        if ma21 and close > ma21:
+            return "HOLD", "보유/추격금지", 4
+        if heavy_volume:
+            return "SELL_WARNING", "매도주의", 4
+        return "EXTENDED", "추격금지", 5
+    return "WATCH", "관찰", 6
+
+
+def current_sell_signal(item: dict[str, Any]) -> str:
+    close = item["last_price"]
+    pivot = item["pivot"]
+    ma21 = item["ma21"]
+    ma50 = item["ma50"]
+    if item["market_state"] == "MARKET_CORRECTION":
+        return "시장 조정장: 신규 매수 보류"
     if pivot and close <= pivot * 0.92:
-        return "매수 기준가 대비 -8% 손절선 이탈"
-    if ma50 and close < ma50 and latest.get("Volume", 0) > avg_volume50:
+        return "피봇 대비 -8% 손절선 이탈"
+    if ma50 and close < ma50 and item["volume_ratio"] >= 1.0:
         return "거래량 동반 50일선 이탈"
-    if market_item.get("distribution_count", 0) >= 4:
-        return "분산일 누적 주의"
-    if pivot and close >= pivot * 1.20:
-        return "20~25% 이익 보호 구간"
-    return "보유/관찰"
+    if ma21 and close < ma21 and item["volume_ratio"] >= 1.2:
+        return "21EMA 대량거래 이탈: 일부 방어"
+    if item["market_state"] == "UPTREND_UNDER_PRESSURE":
+        return "시장 분산일 누적: 신규 매수 축소"
+    if item["category"] != "broad" and pivot and close >= pivot * 1.20:
+        return "섹터/테마 ETF 20~25% 이익보호 구간"
+    return "특별한 매도 신호 없음"
+
+
+def etf_reasons(item: dict[str, Any]) -> tuple[list[str], list[str]]:
+    positives = []
+    risks = []
+    if item["market_state"] == "CONFIRMED_UPTREND":
+        positives.append("시장 FTD가 유지되어 ETF 탐색이 허용됩니다.")
+    elif item["market_state"] == "UPTREND_UNDER_PRESSURE":
+        risks.append("시장 상승장은 유지되지만 분산일 부담이 있습니다.")
+    else:
+        risks.append("시장 조정장으로 신규 매수는 보류합니다.")
+
+    positives.append(f"후보군 내 상대강도 백분위 {item['leader_percentile']}입니다.")
+    if item["last_price"] > (item["ma21"] or float("inf")) and item["last_price"] > (item["ma50"] or float("inf")):
+        positives.append("현재 가격이 21EMA와 50일선 위에 있습니다.")
+    if item["base_exists"]:
+        positives.append(f"{item['base_days']}거래일 베이스 깊이가 {item['base_depth_pct']:.2f}%입니다.")
+    else:
+        risks.append("문서 기준의 유효 베이스가 아직 확인되지 않았습니다.")
+    if item["pivot_distance_pct"] is not None:
+        if item["pivot_distance_pct"] < -5:
+            risks.append(f"피봇까지 {abs(item['pivot_distance_pct']):.2f}% 남아 있어 선취매 구간입니다.")
+        elif item["pivot_distance_pct"] > 5:
+            risks.append(f"피봇보다 {item['pivot_distance_pct']:.2f}% 높아 추격금지 구간입니다.")
+    if item["breakout"] and item["volume_ratio"] < 1.4:
+        risks.append(f"돌파는 보이지만 거래량 비율이 {item['volume_ratio']:.2f}배로 강한 확인에는 부족합니다.")
+    if item["avg_volume50"] < float(item.get("min_avg_volume", 0)):
+        risks.append("50일 평균 거래량이 최소 유동성 기준보다 낮습니다.")
+    if not risks:
+        risks.append("주요 위험 신호는 제한적입니다.")
+    return positives[:4], risks[:4]
+
+
+def infer_etf_category(candidate: dict[str, Any]) -> str:
+    text = f"{candidate.get('index', '')} {candidate.get('note', '')}".lower()
+    sector_words = [
+        "semiconductor",
+        "software",
+        "technology",
+        "communication",
+        "consumer",
+        "financial",
+        "industrial",
+        "energy",
+        "health",
+        "반도체",
+        "2차전지",
+        "섹터",
+        "테마",
+    ]
+    if "msci" in text and candidate.get("ticker") not in {"SPY", "VOO"}:
+        return "country"
+    if any(word in text for word in sector_words):
+        return "sector"
+    return "broad"
 
 
 def pct(current: Any, previous: Any) -> float:
