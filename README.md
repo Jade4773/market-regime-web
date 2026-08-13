@@ -59,11 +59,13 @@ ETF volume proxies are used when the active source is Yahoo Finance:
 
 The `상품 추천` tab shows two rule-based candidate areas:
 
-- Korea Investment & Securities index-linked ELS candidates. A separately
-  provided ELS Open API endpoint can be configured with
-  `KIS_ELS_PRODUCTS_PATH`, `KIS_ELS_PRODUCTS_TR_ID`, and optional
-  `KIS_ELS_PRODUCTS_PARAMS_JSON`. If that API is not configured or fails, the
-  app falls back to the public subscription screen and official ELS links.
+- Public index-linked ELS candidates. The app checks the Korea Financial
+  Investment Association ELS/DLS subscription comparison disclosure first,
+  then falls back to an optional separately configured Korea Investment
+  Securities ELS API and public Mirae Asset, Hyundai Motor Securities, and
+  Daishin Securities subscription pages. It filters for open, pure index-linked
+  ELS candidates and shows coupon, underlyings, early redemption terms,
+  subscription period, maximum loss, issuer rating, and source links.
 - ETF candidates derived from William O'Neil / CAN SLIM-style rules. The market
   must have an active follow-through day with limited distribution pressure, and
   the ETF itself must pass trend, relative strength, buy-zone, liquidity, and

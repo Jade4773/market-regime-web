@@ -8,11 +8,15 @@ import re
 import time
 import zipfile
 from datetime import datetime, timedelta, timezone
+from html import unescape
 from html.parser import HTMLParser
 from typing import Any
+import xml.etree.ElementTree as ET
 
 import pandas as pd
 import requests
+
+requests.packages.urllib3.disable_warnings()
 
 from market_pulse.data import (
     configured_cache_seconds,
@@ -23,16 +27,19 @@ from market_pulse.data import (
 )
 
 
-ELS_SUBSCRIPTION_URL = (
-    "https://securities.koreainvestment.com/main/banking/opensubsc/DervSubsc.jsp"
+KOFIA_ELS_PAGE_URL = (
+    "https://dis.kofia.or.kr/websquare/index.jsp?"
+    "w2xPath=/wq/etcann/DISDLSSubscribing.xml"
+    "&divisionId=MDIS04007001000000&serviceId=SDIS04007001000"
 )
-ELS_GUIDE_URL = (
-    "https://securities.koreainvestment.com/main/mall/openels/_static/TF02ce050000.jsp"
-)
-ELS_NOTICE_URL = (
-    "https://securities.koreainvestment.com/main/mall/openels/"
-    "EdlsInfo.jsp?cmd=TF02cd010001&img_check=img_on_4"
-)
+KOFIA_ELS_SERVICE_URL = "https://dis.kofia.or.kr/proframeWeb/XMLSERVICES/"
+KOFIA_DISCLOSURE_HOME_URL = "https://dis.kofia.or.kr/"
+MIRAE_ELS_SEARCH_URL = "https://securities.miraeasset.com/hks/hks4023/n01.do?bbsCode=dls"
+MIRAE_ELS_AJAX_URL = "https://securities.miraeasset.com/hks/hks4022/a01.json"
+MIRAE_ELS_NOTICE_URL = "https://securities.miraeasset.com/bbs/board/message/list.do?categoryId=7"
+HMSEC_ELS_URL = "https://www.hmsec.com/goMenu.do?scr_menu_id=PD030803"
+DAISHIN_ELS_URL = "https://m.daishin.com/g.ds?m=1012&p=1647&v=1127"
+DART_DERIVATIVE_URL = "https://dart.fss.or.kr/dsab007/main.do"
 
 INDEX_KEYWORDS = [
     "KOSPI",
@@ -527,14 +534,129 @@ class TableTextParser(HTMLParser):
             self._current_cell.append(data)
 
 
-def fetch_kis_els_products() -> dict[str, Any]:
-    api_result = fetch_els_products_from_configured_kis_api()
-    if api_result["attempted"] and api_result["items"]:
-        return api_result
+def fetch_public_els_products() -> dict[str, Any]:
+    attempts = []
+    for fetcher in [
+        fetch_kofia_els_products,
+        fetch_els_products_from_configured_kis_api,
+        fetch_mirae_els_products,
+        fetch_hmsec_els_products,
+        fetch_daishin_els_products,
+    ]:
+        result = fetcher()
+        attempts.append(result.get("status", fetcher.__name__))
+        if result.get("items"):
+            result["api_status"] = "금투협 비교공시를 우선 확인하고, 실패 시 공개 증권사 화면을 보조로 확인합니다."
+            return result
 
-    fallback = fetch_els_products_from_public_site()
-    fallback["api_status"] = api_result["status"]
-    return fallback
+    result = empty_els_result(
+        "공개 소스에서 현재 청약 가능한 순수 지수형 ELS를 찾지 못했습니다. "
+        f"확인 결과: {' / '.join(attempts[:4])}"
+    )
+    result["api_status"] = "금투협, 한국투자 별도 API 설정, 미래에셋, 현대차증권, 대신증권 순서로 확인"
+    return result
+
+
+def fetch_kis_els_products() -> dict[str, Any]:
+    # Backward-compatible wrapper for the Streamlit cache function name.
+    return fetch_public_els_products()
+
+
+def fetch_kofia_els_products() -> dict[str, Any]:
+    request_xml = (
+        "<message>"
+        "<proframeHeader>"
+        "<pfmAppName>FS-DIS2</pfmAppName>"
+        "<pfmSvcName>DISDlsOfferSO</pfmSvcName>"
+        "<pfmFnName>selectSubscribing</pfmFnName>"
+        "</proframeHeader>"
+        "<systemHeader></systemHeader>"
+        "<DISDlsDTO>"
+        "<val1></val1><val2></val2><val3></val3><val4></val4><val5></val5><val6>0</val6>"
+        "</DISDlsDTO>"
+        "</message>"
+    )
+    try:
+        response = requests.post(
+            KOFIA_ELS_SERVICE_URL,
+            data=request_xml.encode("utf-8"),
+            headers={
+                "Content-Type": "text/xml; charset=UTF-8",
+                "User-Agent": "Mozilla/5.0",
+                "Referer": KOFIA_ELS_PAGE_URL,
+            },
+            timeout=20,
+            verify=False,
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        return empty_els_result(f"금투협 비교공시 호출 실패: {exc}", source_url=KOFIA_ELS_PAGE_URL)
+
+    products, stats = kofia_xml_to_els_products(response.content)
+    if not products:
+        return empty_els_result(
+            (
+                "금투협 비교공시에서 청약중 상품 "
+                f"{stats.get('rows', 0)}건을 확인했지만, 현재 시각 기준 청약 가능한 순수 지수형 ELS가 없습니다."
+            ),
+            source_url=KOFIA_ELS_PAGE_URL,
+        )
+
+    return {
+        "items": products[:12],
+        "status": (
+            "금융투자협회 청약정보 비교공시 기준 "
+            f"· 전체 {stats.get('rows', 0)}건 중 순수 지수형 ELS {stats.get('matched', 0)}건"
+        ),
+        "source_url": KOFIA_ELS_PAGE_URL,
+        "guide_url": KOFIA_DISCLOSURE_HOME_URL,
+        "notice_url": DART_DERIVATIVE_URL,
+    }
+
+
+def kofia_xml_to_els_products(xml_bytes: bytes) -> tuple[list[dict[str, str]], dict[str, int]]:
+    products: list[dict[str, str]] = []
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        return [], {"rows": 0, "matched": 0}
+
+    rows = root.findall(".//DISDlsDTO")
+    for row in rows:
+        vals = {child.tag: clean_text(child.text) for child in row}
+        product = kofia_row_to_product(vals)
+        if product:
+            products.append(product)
+
+    return dedupe_products(products), {"rows": len(rows), "matched": len(products)}
+
+
+def kofia_row_to_product(vals: dict[str, str]) -> dict[str, str] | None:
+    name = vals.get("val6", "")
+    underlyings = strip_html_text(vals.get("val8", ""))
+    structure = strip_html_text(vals.get("val18", ""))
+    row_text = " ".join([name, underlyings, structure])
+    if not looks_like_open_index_els(row_text, underlyings=underlyings):
+        return None
+    if not is_subscription_current(vals.get("val16"), vals.get("val17"), vals.get("val21")):
+        return None
+
+    detail_link = vals.get("val20", "")
+    return {
+        "증권사": vals.get("val4", "-"),
+        "상품명": name or "-",
+        "기초자산": underlyings or "-",
+        "쿠폰": format_coupon(vals.get("val15")),
+        "조기상환 조건": extract_early_redemption_terms(structure),
+        "만기/상환주기": extract_maturity_cycle(structure, vals.get("val14")),
+        "청약기간": format_subscription_period(vals.get("val16"), vals.get("val17")),
+        "청약 상태": subscription_status(vals.get("val16"), vals.get("val17"), vals.get("val21")),
+        "최대손실률": format_loss_rate(vals.get("val23")),
+        "신용등급": vals.get("val5", "-"),
+        "상품코드": vals.get("val22", "-"),
+        "출처": "금투협 비교공시",
+        "상세 링크": detail_link or KOFIA_ELS_PAGE_URL,
+    }
 
 
 def fetch_els_products_from_configured_kis_api() -> dict[str, Any]:
@@ -588,9 +710,9 @@ def fetch_els_products_from_configured_kis_api() -> dict[str, Any]:
         "attempted": True,
         "items": products[:12],
         "status": "한국투자증권 Open API 기준",
-        "source_url": ELS_SUBSCRIPTION_URL,
-        "guide_url": ELS_GUIDE_URL,
-        "notice_url": ELS_NOTICE_URL,
+        "source_url": KOFIA_ELS_PAGE_URL,
+        "guide_url": KOFIA_DISCLOSURE_HOME_URL,
+        "notice_url": DART_DERIVATIVE_URL,
         "api_status": "한국투자 ELS API 조회 성공",
     }
 
@@ -606,12 +728,17 @@ def api_rows_to_els_products(rows: list[dict[str, Any]]) -> list[dict[str, str]]
         if dates and max(dates) < today:
             continue
         product = {
+            "증권사": field_by_keywords(row, ["증권사", "issuer", "company"], "한국투자증권"),
             "상품명": field_by_keywords(row, ["상품", "종목", "회차", "prdt", "prod"], text[:80]),
             "기초자산": field_by_keywords(row, ["기초", "자산", "under"], infer_underlyings(text)),
             "청약기간": field_by_keywords(row, ["청약", "모집", "subsc"], infer_date_range(text)),
-            "수익조건": field_by_keywords(row, ["수익", "쿠폰", "yield", "coupon"], "-"),
-            "만기": field_by_keywords(row, ["만기", "maturity"], "-"),
-            "숙려/청약 상태": infer_subscription_status(dates),
+            "쿠폰": field_by_keywords(row, ["수익", "쿠폰", "yield", "coupon"], "-"),
+            "조기상환 조건": field_by_keywords(row, ["상환", "조건", "redemption"], "-"),
+            "만기/상환주기": field_by_keywords(row, ["만기", "maturity"], "-"),
+            "청약 상태": infer_subscription_status(dates),
+            "최대손실률": field_by_keywords(row, ["손실", "loss"], "-"),
+            "신용등급": field_by_keywords(row, ["등급", "rating"], "-"),
+            "출처": "한국투자 별도 API 설정",
         }
         products.append(product)
     return dedupe_products(products)
@@ -627,48 +754,130 @@ def field_by_keywords(row: dict[str, Any], keywords: list[str], fallback: str) -
     return fallback
 
 
-def fetch_els_products_from_public_site() -> dict[str, Any]:
+def fetch_mirae_els_products() -> dict[str, Any]:
     try:
-        response = requests.get(
-            ELS_SUBSCRIPTION_URL,
-            headers={"User-Agent": "Mozilla/5.0"},
+        response = requests.post(
+            MIRAE_ELS_AJAX_URL,
+            data={
+                "omkt_drvs_tcd": "1",
+                "dlbr_term_yn": "",
+                "itm_nm": "",
+                "prgs_scd": "01",
+                "qry_sort_tp": "0",
+                "qry_sort_sqn": "0",
+                "next_key": "",
+            },
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": MIRAE_ELS_SEARCH_URL,
+                "X-Requested-With": "XMLHttpRequest",
+            },
             timeout=15,
         )
         response.raise_for_status()
     except Exception as exc:
-        return empty_els_result(f"한국투자증권 청약 화면에 접속하지 못했습니다: {exc}")
+        return empty_els_result(f"미래에셋 공개 ELS 조회 실패: {exc}", source_url=MIRAE_ELS_SEARCH_URL)
 
-    html = response.text
-    if "login.jsp" in response.url or "로그인" in html and "청약" not in html:
-        return empty_els_result("청약 종목 조회 화면이 로그인 세션을 요구합니다.")
+    try:
+        payload = response.json()
+    except ValueError:
+        return empty_els_result("미래에셋 공개 ELS 응답을 JSON으로 읽지 못했습니다.", source_url=MIRAE_ELS_SEARCH_URL)
 
-    products = parse_els_products(html)
+    products = mirae_rows_to_els_products(payload.get("grid01") or [])
     if not products:
-        return empty_els_result("현재 자동으로 판독 가능한 지수형 ELS 청약 상품이 없습니다.")
+        return empty_els_result("미래에셋 공개 검색에서 현재 청약 가능한 순수 지수형 ELS가 없습니다.", source_url=MIRAE_ELS_SEARCH_URL)
 
     return {
         "items": products[:12],
-        "status": "한국투자증권 청약 화면에서 자동 판독",
-        "source_url": ELS_SUBSCRIPTION_URL,
-        "guide_url": ELS_GUIDE_URL,
-        "notice_url": ELS_NOTICE_URL,
+        "status": f"미래에셋 공개 ELS/DLS 검색 기준 · 순수 지수형 ELS {len(products)}건",
+        "source_url": MIRAE_ELS_SEARCH_URL,
+        "guide_url": MIRAE_ELS_SEARCH_URL,
+        "notice_url": MIRAE_ELS_NOTICE_URL,
     }
 
 
-def empty_els_result(reason: str) -> dict[str, Any]:
+def mirae_rows_to_els_products(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    products = []
+    for row in rows:
+        text = " ".join(str(value) for value in row.values() if value not in {None, ""})
+        underlyings = clean_text(row.get("uast_cn") or infer_underlyings(text))
+        if not looks_like_open_index_els(text, underlyings=underlyings):
+            continue
+        if not is_subscription_current(row.get("apy_strt_dt"), row.get("apy_end_dt"), ""):
+            continue
+        products.append(
+            {
+                "증권사": "미래에셋증권",
+                "상품명": clean_text(row.get("itm_nm")) or "-",
+                "기초자산": strip_html_text(underlyings) or "-",
+                "쿠폰": format_coupon(row.get("omkt_drv_frcs_ern_r")),
+                "조기상환 조건": clean_text(row.get("omkt_drv_rpy_cycl_cn")) or "-",
+                "만기/상환주기": combine_maturity_cycle(
+                    row.get("omkt_drv_exrt_cycl_cn"),
+                    row.get("omkt_drv_rpy_cycl_cn"),
+                ),
+                "청약기간": format_subscription_period(row.get("apy_strt_dt"), row.get("apy_end_dt")),
+                "청약 상태": clean_text(row.get("prgs_stat_nm")) or infer_subscription_status(parse_dates(text)),
+                "최대손실률": format_loss_rate(row.get("max_abl_los_r")),
+                "신용등급": "-",
+                "상품코드": clean_text(row.get("itm_no")) or "-",
+                "출처": "미래에셋 공개검색",
+                "상세 링크": MIRAE_ELS_SEARCH_URL,
+            }
+        )
+    return dedupe_products(products)
+
+
+def fetch_hmsec_els_products() -> dict[str, Any]:
+    return fetch_html_els_products(
+        HMSEC_ELS_URL,
+        "현대차증권",
+        "현대차증권 공개 청약 표에서 현재 청약 가능한 순수 지수형 ELS가 없습니다.",
+    )
+
+
+def fetch_daishin_els_products() -> dict[str, Any]:
+    return fetch_html_els_products(
+        DAISHIN_ELS_URL,
+        "대신증권",
+        "대신증권 공개 청약 표에서 현재 청약 가능한 순수 지수형 ELS가 없습니다.",
+    )
+
+
+def fetch_html_els_products(url: str, issuer: str, empty_message: str) -> dict[str, Any]:
+    try:
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        response.raise_for_status()
+        response.encoding = response.apparent_encoding or response.encoding
+    except Exception as exc:
+        return empty_els_result(f"{issuer} 공개 청약 표 호출 실패: {exc}", source_url=url)
+
+    products = parse_els_products(response.text, issuer=issuer)
+    if not products:
+        return empty_els_result(empty_message, source_url=url)
+
+    return {
+        "items": products[:12],
+        "status": f"{issuer} 공개 청약 표 기준 · 순수 지수형 ELS {len(products)}건",
+        "source_url": url,
+        "guide_url": url,
+        "notice_url": DART_DERIVATIVE_URL,
+    }
+
+
+def empty_els_result(reason: str, *, source_url: str = KOFIA_ELS_PAGE_URL) -> dict[str, Any]:
     return {
         "items": [],
         "status": reason,
-        "source_url": ELS_SUBSCRIPTION_URL,
-        "guide_url": ELS_GUIDE_URL,
-        "notice_url": ELS_NOTICE_URL,
+        "source_url": source_url,
+        "guide_url": KOFIA_DISCLOSURE_HOME_URL,
+        "notice_url": DART_DERIVATIVE_URL,
     }
 
 
-def parse_els_products(html: str) -> list[dict[str, str]]:
+def parse_els_products(html: str, *, issuer: str = "-") -> list[dict[str, str]]:
     parser = TableTextParser()
     parser.feed(html)
-    today = datetime.now(timezone(timedelta(hours=9))).date()
     products = []
 
     for table in parser.tables:
@@ -677,23 +886,31 @@ def parse_els_products(html: str) -> list[dict[str, str]]:
         headers = [normalize_header(value) for value in table[0]]
         for row in table[1:]:
             text = " ".join(row)
-            if not looks_like_open_index_els(text):
+            underlyings = infer_underlyings(text)
+            if not looks_like_open_index_els(text, underlyings=underlyings):
                 continue
 
             dates = parse_dates(text)
-            if dates and max(dates) < today:
+            if dates and not is_subscription_current(min(dates), max(dates), ""):
                 continue
 
-            product = row_to_product(headers, row)
-            product["숙려/청약 상태"] = infer_subscription_status(dates)
+            product = row_to_product(headers, row, issuer=issuer)
+            product["청약 상태"] = infer_subscription_status(dates)
             products.append(product)
 
     return dedupe_products(products)
 
 
-def looks_like_open_index_els(text: str) -> bool:
+def looks_like_open_index_els(text: str, *, underlyings: str | None = None) -> bool:
     upper = text.upper()
-    return "ELS" in upper and any(keyword.upper() in upper for keyword in INDEX_KEYWORDS)
+    if "ELB" in upper or "DLB" in upper or "사채" in text:
+        return False
+    if not ("ELS" in upper or "주가연계증권" in text or "파생결합증권" in text):
+        return False
+    parts = split_underlyings(underlyings or infer_underlyings(text))
+    if parts:
+        return all(is_index_underlying(part) for part in parts)
+    return any(keyword.upper() in upper for keyword in INDEX_KEYWORDS)
 
 
 def normalize_header(value: str) -> str:
@@ -711,15 +928,21 @@ def normalize_header(value: str) -> str:
     return value or "항목"
 
 
-def row_to_product(headers: list[str], row: list[str]) -> dict[str, str]:
+def row_to_product(headers: list[str], row: list[str], *, issuer: str = "-") -> dict[str, str]:
     fields = {headers[idx] if idx < len(headers) else f"항목{idx + 1}": value for idx, value in enumerate(row)}
     row_text = " · ".join(value for value in row if value)
     return {
+        "증권사": issuer,
         "상품명": first_present(fields, ["상품명", "종목명", "회차"], row_text[:80]),
         "기초자산": first_present(fields, ["기초자산"], infer_underlyings(row_text)),
         "청약기간": first_present(fields, ["청약기간", "모집기간"], infer_date_range(row_text)),
-        "수익조건": first_present(fields, ["수익조건"], "-"),
-        "만기": first_present(fields, ["만기"], "-"),
+        "쿠폰": first_present(fields, ["수익조건"], "-"),
+        "조기상환 조건": first_present(fields, ["상환조건"], "-"),
+        "만기/상환주기": first_present(fields, ["만기"], "-"),
+        "최대손실률": first_present(fields, ["조건미충족시손실률"], "-"),
+        "신용등급": "-",
+        "출처": f"{issuer} 공개표",
+        "상세 링크": "-",
     }
 
 
@@ -732,7 +955,8 @@ def first_present(fields: dict[str, str], keys: list[str], fallback: str) -> str
 
 
 def infer_underlyings(text: str) -> str:
-    found = [keyword for keyword in INDEX_KEYWORDS if keyword.upper() in text.upper()]
+    cleaned = strip_html_text(text)
+    found = [keyword for keyword in INDEX_KEYWORDS if keyword.upper() in cleaned.upper()]
     return ", ".join(dict.fromkeys(found)) or "-"
 
 
@@ -770,11 +994,174 @@ def parse_dates(text: str) -> list[Any]:
     return dates
 
 
+def clean_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return " ".join(unescape(str(value)).split())
+
+
+def strip_html_text(value: Any) -> str:
+    text = unescape(str(value or ""))
+    text = re.sub(r"(?i)<br\s*/?>", ", ", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return clean_text(text).strip(" ,")
+
+
+def split_underlyings(value: str) -> list[str]:
+    cleaned = strip_html_text(value)
+    if not cleaned or cleaned == "-":
+        return []
+    return [part.strip() for part in re.split(r"[,/·\n]+", cleaned) if part.strip()]
+
+
+def is_index_underlying(value: str) -> bool:
+    upper = value.upper().replace(" ", "")
+    index_markers = [
+        "INDEX",
+        "KOSPI",
+        "S&P",
+        "SPX",
+        "NASDAQ",
+        "NIKKEI",
+        "EUROSTOXX",
+        "EURO",
+        "STOXX",
+        "HSCEI",
+        "HANGSENG",
+        "HANG SENG",
+        "항셍",
+        "코스피",
+        "나스닥",
+        "닛케이",
+    ]
+    return any(marker.replace(" ", "") in upper for marker in index_markers)
+
+
+def parse_yyyymmdd(value: Any) -> Any:
+    text = re.sub(r"\D", "", str(value or ""))
+    if len(text) < 8:
+        return None
+    try:
+        return datetime(int(text[:4]), int(text[4:6]), int(text[6:8])).date()
+    except ValueError:
+        return None
+
+
+def parse_subscription_end_datetime(note: Any) -> Any:
+    text = clean_text(note)
+    match = re.search(r"(20\d{2})[.\-/년 ]+(\d{1,2})[.\-/월 ]+(\d{1,2}).*?(\d{1,2})시\s*(\d{1,2})?분?", text)
+    if not match:
+        return None
+    minute = int(match.group(5) or 0)
+    try:
+        return datetime(
+            int(match.group(1)),
+            int(match.group(2)),
+            int(match.group(3)),
+            int(match.group(4)),
+            minute,
+            tzinfo=timezone(timedelta(hours=9)),
+        )
+    except ValueError:
+        return None
+
+
+def is_subscription_current(start_value: Any, end_value: Any, note: Any) -> bool:
+    now = datetime.now(timezone(timedelta(hours=9)))
+    start_date = start_value if hasattr(start_value, "year") else parse_yyyymmdd(start_value)
+    end_date = end_value if hasattr(end_value, "year") else parse_yyyymmdd(end_value)
+    if start_date and now.date() < start_date:
+        return False
+    if end_date and now.date() > end_date:
+        return False
+    end_datetime = parse_subscription_end_datetime(note)
+    if end_datetime and now > end_datetime:
+        return False
+    return bool(start_date or end_date)
+
+
+def format_yyyymmdd(value: Any) -> str:
+    date_value = parse_yyyymmdd(value)
+    return date_value.strftime("%Y-%m-%d") if date_value else "-"
+
+
+def format_subscription_period(start_value: Any, end_value: Any) -> str:
+    start = format_yyyymmdd(start_value)
+    end = format_yyyymmdd(end_value)
+    if start == "-" and end == "-":
+        return "-"
+    if start == end:
+        return start
+    return f"{start} ~ {end}"
+
+
+def format_coupon(value: Any) -> str:
+    text = clean_text(value)
+    if not text:
+        return "-"
+    if "연" in text or "%" in text:
+        return text
+    try:
+        return f"연 {float(text):.2f}%"
+    except ValueError:
+        return text
+
+
+def format_loss_rate(value: Any) -> str:
+    text = clean_text(value)
+    if not text:
+        return "-"
+    if "%" in text:
+        return text
+    try:
+        return f"{float(text):.0f}%"
+    except ValueError:
+        return text
+
+
+def subscription_status(start_value: Any, end_value: Any, note: Any) -> str:
+    end_datetime = parse_subscription_end_datetime(note)
+    if end_datetime:
+        return f"청약 가능 ({end_datetime.strftime('%m/%d %H:%M')}까지)"
+    dates = [date for date in [parse_yyyymmdd(start_value), parse_yyyymmdd(end_value)] if date]
+    return infer_subscription_status(dates)
+
+
+def extract_maturity_cycle(structure: str, maturity_value: Any) -> str:
+    text = clean_text(structure)
+    match = re.search(r"(\d+년\s*만기)\s*(\d+개월\s*단위\s*조기상환형)", text)
+    if match:
+        return f"{match.group(1)} / {match.group(2)}"
+    maturity = format_yyyymmdd(maturity_value)
+    return f"만기 {maturity}" if maturity != "-" else "-"
+
+
+def extract_early_redemption_terms(structure: str) -> str:
+    text = clean_text(structure)
+    match = re.search(r"((?:Lizard)?StepDown형)\[([^\]]+)\]", text, re.IGNORECASE)
+    if match:
+        label = "리자드 스텝다운" if "Lizard" in match.group(1) else "스텝다운"
+        raw_terms = match.group(2)
+        parts = raw_terms.split("/")
+        early = parts[0]
+        floor = "/".join(parts[1:]) if len(parts) > 1 else ""
+        if floor:
+            return f"{label} {early} / 만기·낙인 기준 {floor}"
+        return f"{label} {early}"
+    return text[:120] if text else "-"
+
+
+def combine_maturity_cycle(maturity: Any, cycle: Any) -> str:
+    values = [clean_text(maturity), clean_text(cycle)]
+    values = [value for value in values if value and value != "-"]
+    return " / ".join(values) if values else "-"
+
+
 def dedupe_products(products: list[dict[str, str]]) -> list[dict[str, str]]:
     seen = set()
     unique = []
     for product in products:
-        key = (product.get("상품명"), product.get("기초자산"), product.get("청약기간"))
+        key = (product.get("증권사"), product.get("상품명"), product.get("기초자산"), product.get("청약기간"))
         if key in seen:
             continue
         seen.add(key)

@@ -9,7 +9,7 @@ from market_pulse.data import DEFAULT_CACHE_SECONDS, get_market_snapshot
 from market_pulse.products import (
     build_etf_market_summary,
     build_etf_recommendations,
-    fetch_kis_els_products,
+    fetch_public_els_products,
 )
 
 
@@ -26,7 +26,7 @@ APP_VERSION = "etf-full-screener-v4-liquidity-cache-3h"
 
 @st.cache_data(ttl=DEFAULT_CACHE_SECONDS, show_spinner=False)
 def get_els_products() -> dict[str, Any]:
-    return fetch_kis_els_products()
+    return fetch_public_els_products()
 
 
 def format_number(value: float | int | None, digits: int = 2) -> str:
@@ -795,7 +795,7 @@ def render_products_tab(snapshot: dict[str, Any]) -> None:
           <div class="summary-label">규칙 기반 상품 후보</div>
           <div class="summary-title neutral">상품 추천</div>
           <p class="summary-copy">
-            한국투자증권 ELS 청약 후보와 윌리엄 오닐식 ETF 매수 후보를 분리해서 확인합니다.
+            공개 ELS 청약 정보와 윌리엄 오닐식 ETF 매수 후보를 분리해서 확인합니다.
           </p>
         </div>
         """,
@@ -811,15 +811,15 @@ def render_products_tab(snapshot: dict[str, Any]) -> None:
 
 
 def render_els_products_section() -> None:
-    st.markdown('<div class="section-title">한국투자증권 지수형 ELS</div>', unsafe_allow_html=True)
-    with st.spinner("한국투자증권 ELS 청약 정보를 확인하는 중입니다."):
+    st.markdown('<div class="section-title">공개 ELS 청약 모니터</div>', unsafe_allow_html=True)
+    with st.spinner("공개 ELS 청약 정보를 확인하는 중입니다."):
         els = get_els_products()
 
     items = els.get("items", [])
     if els.get("api_status"):
-        st.caption(f"API 우선 확인: {els['api_status']}")
+        st.caption(f"데이터 확인: {els['api_status']}")
     if items:
-        st.caption(f"{els.get('status', '한국투자증권 기준')} · 청약 종료로 판독된 항목은 제외")
+        st.caption(f"{els.get('status', '공개 비교공시 기준')} · 청약 종료 또는 비지수형으로 판독된 항목은 제외")
         st.dataframe(items, hide_index=True, use_container_width=True)
     else:
         st.info(
@@ -827,17 +827,17 @@ def render_els_products_section() -> None:
             f"사유: {els.get('status', '확인 불가')}"
         )
         st.caption(
-            "한국투자증권 공식 안내상 ELS/DLS 청약 가능 상품은 "
-            "`금융상품 > ELS/DLS > ELS/DLS 거래 > ELS/DLS 청약 > 청약 종목조회/신청`에서 확인합니다."
+            "금융투자협회 비교공시는 증권사에서 직접 청약 가능한 공모 ELS·DLS·ELB·DLB를 모아 보여줍니다. "
+            "자동 판독이 실패하거나 청약 시간이 끝난 경우에는 아래 공식 화면에서 직접 확인하세요."
         )
 
     link_cols = st.columns(3)
     with link_cols[0]:
-        st.link_button("ELS 청약 화면", els.get("source_url"), use_container_width=True)
+        st.link_button("공개 비교공시", els.get("source_url"), use_container_width=True)
     with link_cols[1]:
-        st.link_button("청약 안내", els.get("guide_url"), use_container_width=True)
+        st.link_button("금투협 전자공시", els.get("guide_url"), use_container_width=True)
     with link_cols[2]:
-        st.link_button("ELS 공지", els.get("notice_url"), use_container_width=True)
+        st.link_button("DART 공시검색", els.get("notice_url"), use_container_width=True)
 
 
 def render_etf_recommendation_section(snapshot: dict[str, Any]) -> None:
@@ -986,14 +986,14 @@ def render_product_guide() -> None:
     with st.expander("상품 추천 탭 판정 방식", expanded=False):
         st.markdown(
             """
-            **1. 한국투자증권 지수형 ELS**
+            **1. 공개 ELS 청약 모니터**
 
-            - 먼저 한국투자증권 Open API로 ELS 청약 상품 조회가 설정되어 있는지 확인합니다.
-            - 현재 공개 Open API 카탈로그에는 ELS/DLS 청약 상품 조회 엔드포인트가 확인되지 않아, 별도 API 문서를 받으면 `KIS_ELS_PRODUCTS_PATH`, `KIS_ELS_PRODUCTS_TR_ID`로 연결할 수 있게 해두었습니다.
-            - API가 설정되지 않았거나 실패하면 한국투자증권 ELS/DLS 청약 화면에서 청약 가능 상품을 읽어옵니다.
-            - 상품명 또는 기초자산에 `KOSPI`, `S&P`, `NASDAQ`, `EURO STOXX`, `NIKKEI`, `HSCEI` 같은 지수 키워드가 있는 ELS만 지수형으로 분류합니다.
-            - 청약 종료일로 보이는 날짜가 현재 날짜보다 과거이면 목록에서 제외합니다.
-            - 청약 화면이 로그인 세션을 요구하거나 페이지 구조가 바뀌면 자동 판독 대신 공식 청약 화면 바로가기를 보여줍니다.
+            - 1순위로 금융투자협회 `파생결합증권등 청약정보 비교공시 > 청약중인상품` 데이터를 확인합니다.
+            - 이 비교공시에는 발행사, 신용등급, 상품명, 기초자산, 만기일, 조건 충족시 연 수익률, 청약시작일, 청약종료일, 상품유형, 발행사 상세 링크가 포함됩니다.
+            - 금투협 조회가 실패하면 한국투자증권 별도 ELS API 설정, 미래에셋 공개 ELS/DLS 검색, 현대차증권 공개 청약 표, 대신증권 공개 청약 표 순서로 보조 확인합니다.
+            - 상품명 또는 구조에 `ELS`, `주가연계증권`, `파생결합증권`이 있고, 기초자산이 `KOSPI`, `S&P`, `NASDAQ`, `EURO STOXX`, `NIKKEI`, `HSCEI` 같은 주가지수로만 구성된 상품을 순수 지수형 ELS로 분류합니다.
+            - 청약 종료일이 지났거나 금투협 비고에 표시된 청약 종료 시간이 지난 상품은 목록에서 제외합니다.
+            - 표시 항목은 증권사, 상품명, 기초자산, 쿠폰, 조기상환 조건, 만기/상환주기, 청약기간, 최대손실률, 신용등급, 상세 링크입니다.
 
             **2. CAN SLIM ETF TOP 2**
 
