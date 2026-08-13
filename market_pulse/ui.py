@@ -5,7 +5,7 @@ from typing import Any
 
 import streamlit as st
 
-from market_pulse.data import get_market_snapshot
+from market_pulse.data import DEFAULT_CACHE_SECONDS, get_market_snapshot
 from market_pulse.products import (
     build_etf_market_summary,
     build_etf_recommendations,
@@ -21,10 +21,10 @@ TAB_LABELS = {
     "products": "상품 추천",
 }
 
-APP_VERSION = "etf-full-screener-v3"
+APP_VERSION = "etf-full-screener-v3-cache-3h"
 
 
-@st.cache_data(ttl=900, show_spinner=False)
+@st.cache_data(ttl=DEFAULT_CACHE_SECONDS, show_spinner=False)
 def get_els_products() -> dict[str, Any]:
     return fetch_kis_els_products()
 
@@ -39,6 +39,14 @@ def format_pct(value: float | None) -> str:
     if value is None:
         return "-"
     return f"{value:+.2f}%"
+
+
+def format_cache_duration(seconds: int) -> str:
+    if seconds % 3600 == 0:
+        return f"{seconds // 3600}시간"
+    if seconds % 60 == 0:
+        return f"{seconds // 60}분"
+    return f"{seconds}초"
 
 
 def data_meta_text(item: dict[str, Any]) -> str:
@@ -583,7 +591,7 @@ def render_market_dashboard() -> None:
     elif active_tab == "products":
         render_products_tab(snapshot)
 
-    st.caption(f"데이터는 최대 {snapshot['cache_seconds']}초 동안 캐시됩니다.")
+    st.caption(f"데이터는 최대 {format_cache_duration(snapshot['cache_seconds'])} 동안 캐시됩니다.")
 
 
 def get_active_tab() -> str:

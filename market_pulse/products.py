@@ -14,7 +14,13 @@ from typing import Any
 import pandas as pd
 import requests
 
-from market_pulse.data import fetch_yahoo_chart, kis_date_range, kis_get, kis_rows_to_frame
+from market_pulse.data import (
+    configured_cache_seconds,
+    fetch_yahoo_chart,
+    kis_date_range,
+    kis_get,
+    kis_rows_to_frame,
+)
 
 
 ELS_SUBSCRIPTION_URL = (
@@ -45,8 +51,8 @@ INDEX_KEYWORDS = [
 ]
 
 KIS_MASTER_BASE_URL = "https://new.real.download.dws.co.kr/common/master"
-ETF_SCREENER_VERSION = "kis-universe-v3"
-ETF_SCREEN_CACHE_SECONDS = int(os.getenv("ETF_SCREEN_CACHE_SECONDS", "3600"))
+ETF_SCREENER_VERSION = "kis-universe-v3-cache-3h"
+ETF_SCREEN_CACHE_SECONDS = configured_cache_seconds("ETF_SCREEN_CACHE_SECONDS")
 ETF_PRELIMINARY_LIMIT = int(os.getenv("ETF_PRELIMINARY_LIMIT", "180"))
 ETF_FULL_ANALYSIS_LIMIT = int(os.getenv("ETF_FULL_ANALYSIS_LIMIT", "40"))
 ETF_SPARK_BATCH_SIZE = int(os.getenv("ETF_SPARK_BATCH_SIZE", "80"))

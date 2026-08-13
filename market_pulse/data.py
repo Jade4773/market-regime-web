@@ -15,6 +15,7 @@ from market_pulse.rules import analyze_index
 
 
 SNAPSHOT_SCHEMA_VERSION = 18
+DEFAULT_CACHE_SECONDS = 3 * 60 * 60
 
 
 INDEXES = {
@@ -38,7 +39,7 @@ _KIS_TOKEN_CACHE: dict[str, Any] = {}
 
 def get_market_snapshot() -> dict[str, Any]:
     global _CACHE
-    ttl = int(os.getenv("CACHE_SECONDS", "900"))
+    ttl = configured_cache_seconds()
     now = time.time()
     if (
         _CACHE
@@ -66,6 +67,19 @@ def get_market_snapshot() -> dict[str, Any]:
         schema_version=SNAPSHOT_SCHEMA_VERSION,
     )
     return snapshot
+
+
+def configured_cache_seconds(
+    name: str = "CACHE_SECONDS",
+    *,
+    default: int = DEFAULT_CACHE_SECONDS,
+    minimum: int = DEFAULT_CACHE_SECONDS,
+) -> int:
+    try:
+        seconds = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        seconds = default
+    return max(seconds, minimum)
 
 
 def fetch_history(meta: dict[str, Any]) -> pd.DataFrame:
