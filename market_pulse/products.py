@@ -68,7 +68,8 @@ ETF_DOMESTIC_MIN_PREV_VOLUME = int(os.getenv("ETF_DOMESTIC_MIN_PREV_VOLUME", "10
 ETF_DOMESTIC_MIN_AVG_VALUE = int(os.getenv("ETF_DOMESTIC_MIN_AVG_VALUE", "1000000000"))
 ETF_US_MIN_AVG_VALUE = int(os.getenv("ETF_US_MIN_AVG_VALUE", "5000000"))
 ETF_MIN_HISTORY_ROWS = 220
-ELS_DISPLAY_LIMIT = int(os.getenv("ELS_DISPLAY_LIMIT", "80"))
+ELS_TOP_LIMIT = int(os.getenv("ELS_TOP_LIMIT", "5"))
+ELS_MAX_PER_ISSUER = int(os.getenv("ELS_MAX_PER_ISSUER", "2"))
 
 _ETF_RECOMMENDATION_CACHE: dict[str, Any] = {}
 _ETF_UNIVERSE_CACHE: dict[str, Any] = {}
@@ -1179,7 +1180,323 @@ def dedupe_products(products: list[dict[str, str]]) -> list[dict[str, str]]:
 
 
 def limit_els_products(products: list[dict[str, str]]) -> list[dict[str, str]]:
-    return products[: max(1, ELS_DISPLAY_LIMIT)]
+    ranked = rank_els_products(products)
+    limit = max(1, ELS_TOP_LIMIT)
+    selected = []
+    issuer_counts: dict[str, int] = {}
+
+    for product in ranked:
+        issuer = product.get("증권사") or "-"
+        if issuer_counts.get(issuer, 0) >= ELS_MAX_PER_ISSUER:
+            continue
+        selected.append(product)
+        issuer_counts[issuer] = issuer_counts.get(issuer, 0) + 1
+        if len(selected) >= limit:
+            return selected
+
+    selected_keys = {
+        (product.get("증권사"), product.get("상품명"), product.get("상품코드"))
+        for product in selected
+    }
+    for product in ranked:
+        key = (product.get("증권사"), product.get("상품명"), product.get("상품코드"))
+        if key in selected_keys:
+            continue
+        selected.append(product)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def rank_els_products(products: list[dict[str, str]]) -> list[dict[str, str]]:
+    scored = [score_els_product(product) for product in products]
+    return sorted(
+        scored,
+        key=lambda product: (
+            float(product.get("ELS 점수", 0)),
+            parse_number(product.get("쿠폰")),
+            product.get("신용등급", ""),
+        ),
+        reverse=True,
+    )
+
+
+def score_els_product(product: dict[str, str]) -> dict[str, str]:
+    coupon = parse_number(product.get("쿠폰"))
+    underlyings = split_underlyings(product.get("기초자산", ""))
+    terms = f"{product.get('조기상환 조건', '')} {product.get('만기/상환주기', '')}"
+    barrier_profile = extract_els_barrier_profile(terms)
+    barriers = barrier_profile["early_barriers"]
+    final_barrier = barrier_profile["final_barrier"]
+    avg_barrier = sum(barriers) / len(barriers) if barriers else None
+    no_knock_in = barrier_profile["no_knock_in"]
+    knock_in = barrier_profile["knock_in"]
+    early_months = infer_redemption_interval_months(terms)
+
+    protection_score, protection_note = score_els_protection(
+        final_barrier, avg_barrier, knock_in, no_knock_in
+    )
+    underlying_score, underlying_note = score_els_underlyings(underlyings)
+    coupon_score, coupon_note = score_els_coupon(coupon)
+    issuer_score, issuer_note = score_els_issuer(product.get("신용등급", ""))
+    term_score, term_note = score_els_term(product.get("만기/상환주기", ""), early_months)
+
+    total = round(
+        protection_score + underlying_score + coupon_score + issuer_score + term_score,
+        1,
+    )
+    grade = els_score_grade(total)
+    reasons = [
+        protection_note,
+        coupon_note,
+        underlying_note,
+        issuer_note,
+        term_note,
+    ]
+    warnings = els_warning_notes(product, coupon, final_barrier, knock_in, no_knock_in, underlyings)
+
+    return {
+        "ELS 점수": f"{total:.1f}",
+        "판정": grade,
+        "핵심 근거": " · ".join(note for note in reasons if note),
+        "주의 요인": " · ".join(warnings) if warnings else "특이 위험 요인 제한적",
+        **product,
+        "상세 점수": (
+            f"방어 {protection_score:.1f}/35 · 기초자산 {underlying_score:.1f}/20 · "
+            f"쿠폰 {coupon_score:.1f}/20 · 신용 {issuer_score:.1f}/15 · 기간 {term_score:.1f}/10"
+        ),
+    }
+
+
+def parse_number(value: Any) -> float:
+    match = re.search(r"-?\d+(?:\.\d+)?", str(value or "").replace(",", ""))
+    return float(match.group(0)) if match else 0.0
+
+
+def extract_els_barrier_profile(text: str) -> dict[str, Any]:
+    no_knock_in = bool(re.search(r"\bNoKI\b|노낙인|노\s*낙인", text, re.IGNORECASE))
+    early_text, floor_text = split_stepdown_barrier_text(text)
+    early_barriers = extract_barrier_numbers(remove_lizard_barriers(early_text))
+
+    if not early_barriers:
+        early_barriers = extract_barrier_numbers(remove_lizard_barriers(text))
+
+    final_barrier = early_barriers[-1] if early_barriers else None
+    knock_in = infer_knock_in_barrier(text, floor_text, no_knock_in)
+    return {
+        "early_barriers": early_barriers,
+        "final_barrier": final_barrier,
+        "knock_in": knock_in,
+        "no_knock_in": no_knock_in,
+    }
+
+
+def split_stepdown_barrier_text(text: str) -> tuple[str, str]:
+    patterns = [
+        r"StepDown형\[([^\]]+)\]",
+        r"스텝다운\s*\(([^)]+)\)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if not match:
+            continue
+        body = match.group(1)
+        if "/" in body:
+            early, floor = body.split("/", 1)
+            return early, floor
+        return body, ""
+    match = re.search(r"Step[-\s]?Down형\s*([0-9][0-9./\-\s]+)", text, re.IGNORECASE)
+    if match:
+        return match.group(1), ""
+    return text, ""
+
+
+def remove_lizard_barriers(text: str) -> str:
+    return re.sub(r"\(L\d{2,3}(?:\.\d+)?\)", "", text, flags=re.IGNORECASE)
+
+
+def extract_barrier_numbers(text: str) -> list[float]:
+    values = []
+    for raw in re.findall(r"(?<!\d)(\d{2,3}(?:\.\d+)?)(?!\d)", text):
+        value = float(raw)
+        if 30 <= value <= 100:
+            values.append(value)
+    return values[:14]
+
+
+def infer_knock_in_barrier(text: str, floor_text: str, no_knock_in: bool) -> float | None:
+    if no_knock_in:
+        return None
+    ki_match = re.search(r"(\d{2,3}(?:\.\d+)?)\s*(?:KI|낙인|Knock)", text, re.IGNORECASE)
+    if not ki_match:
+        ki_match = re.search(r"Knock\s*In\s*(\d{2,3}(?:\.\d+)?)", text, re.IGNORECASE)
+    if not ki_match:
+        ki_match = re.search(r"(?:KI|낙인|Knock)\s*(\d{2,3}(?:\.\d+)?)", text, re.IGNORECASE)
+    if ki_match:
+        return float(ki_match.group(1))
+    floor_barriers = extract_barrier_numbers(floor_text)
+    if floor_barriers:
+        return floor_barriers[-1]
+    return None
+
+
+def infer_redemption_interval_months(text: str) -> int | None:
+    match = re.search(r"(\d+)\s*개월", text)
+    return int(match.group(1)) if match else None
+
+
+def score_els_protection(
+    final_barrier: float | None,
+    avg_barrier: float | None,
+    knock_in: float | None,
+    no_knock_in: bool,
+) -> tuple[float, str]:
+    if final_barrier is None:
+        final_score = 6
+        final_note = "만기상환 배리어 확인 필요"
+    elif final_barrier <= 50:
+        final_score = 14
+        final_note = f"만기상환 기준 {final_barrier:g}%"
+    elif final_barrier <= 55:
+        final_score = 12
+        final_note = f"만기상환 기준 {final_barrier:g}%"
+    elif final_barrier <= 60:
+        final_score = 10
+        final_note = f"만기상환 기준 {final_barrier:g}%"
+    elif final_barrier <= 65:
+        final_score = 8
+        final_note = f"만기상환 기준 {final_barrier:g}%"
+    else:
+        final_score = 5
+        final_note = f"만기상환 기준 {final_barrier:g}%"
+
+    if no_knock_in:
+        knock_score = 12
+        knock_note = "노낙인 구조"
+    elif knock_in is None:
+        knock_score = 5
+        knock_note = "낙인 조건 확인 필요"
+    elif knock_in <= 35:
+        knock_score = 10
+        knock_note = f"낙인 {knock_in:g}%"
+    elif knock_in <= 40:
+        knock_score = 8
+        knock_note = f"낙인 {knock_in:g}%"
+    elif knock_in <= 45:
+        knock_score = 6
+        knock_note = f"낙인 {knock_in:g}%"
+    else:
+        knock_score = 4
+        knock_note = f"낙인 {knock_in:g}%"
+
+    if avg_barrier is None:
+        early_score = 4
+    elif avg_barrier <= 75:
+        early_score = 9
+    elif avg_barrier <= 80:
+        early_score = 7
+    elif avg_barrier <= 85:
+        early_score = 5
+    else:
+        early_score = 3
+
+    return final_score + knock_score + early_score, f"{final_note}, {knock_note}"
+
+
+def score_els_underlyings(underlyings: list[str]) -> tuple[float, str]:
+    count = len(underlyings)
+    count_score = {1: 8, 2: 6, 3: 4}.get(count, 2)
+    if not underlyings:
+        return 8, "기초자산 확인 필요"
+
+    quality_scores = [underlying_quality_score(name) for name in underlyings]
+    quality_score = sum(quality_scores) / len(quality_scores)
+    score = count_score + quality_score
+    return min(score, 20), f"기초자산 {count}개"
+
+
+def underlying_quality_score(name: str) -> float:
+    upper = name.upper().replace(" ", "")
+    if "S&P500" in upper or "EUROSTOXX50" in upper:
+        return 12
+    if "KOSPI200" in upper or "NIKKEI225" in upper:
+        return 11
+    if "NASDAQ" in upper:
+        return 9
+    if "HSCEI" in upper or "HANGSENG" in upper or "항셍" in name:
+        return 7
+    return 9
+
+
+def score_els_coupon(coupon: float) -> tuple[float, str]:
+    if coupon <= 0:
+        return 0, "쿠폰 확인 필요"
+    if coupon < 8:
+        score = 8
+    elif coupon < 12:
+        score = 13
+    elif coupon < 18:
+        score = 18
+    elif coupon <= 24:
+        score = 20
+    elif coupon <= 30:
+        score = 16
+    else:
+        score = 12
+    return score, f"쿠폰 연 {coupon:g}%"
+
+
+def score_els_issuer(rating: str) -> tuple[float, str]:
+    normalized = rating.replace(" ", "").upper()
+    table = {
+        "AAA": 15,
+        "AA+": 14,
+        "AA": 13,
+        "AA-": 12,
+        "A+": 10,
+        "A": 8,
+        "A-": 6,
+    }
+    return table.get(normalized, 5), f"신용등급 {rating or '확인 필요'}"
+
+
+def score_els_term(maturity: str, interval_months: int | None) -> tuple[float, str]:
+    interval_score = 5 if interval_months and interval_months <= 3 else 4 if interval_months == 4 else 3
+    maturity_score = 5 if "3년" in maturity or "2029" in maturity else 4
+    note = f"{interval_months}개월 조기상환" if interval_months else "조기상환 주기 확인 필요"
+    return maturity_score + interval_score, note
+
+
+def els_score_grade(score: float) -> str:
+    if score >= 80:
+        return "우선 검토"
+    if score >= 70:
+        return "검토 가능"
+    if score >= 60:
+        return "조건부 검토"
+    return "주의"
+
+
+def els_warning_notes(
+    product: dict[str, str],
+    coupon: float,
+    final_barrier: float | None,
+    knock_in: float | None,
+    no_knock_in: bool,
+    underlyings: list[str],
+) -> list[str]:
+    warnings = []
+    if coupon >= 25:
+        warnings.append("고쿠폰 구조")
+    if final_barrier and final_barrier >= 65:
+        warnings.append("만기상환 기준 높음")
+    if knock_in and knock_in >= 45 and not no_knock_in:
+        warnings.append("낙인 기준 높음")
+    if len(underlyings) >= 3:
+        warnings.append("기초자산 3개 이상")
+    if re.search(r"USD|달러", product.get("조기상환 조건", ""), re.IGNORECASE):
+        warnings.append("외화 발행")
+    return warnings
 
 
 def summarize_els_issuers(products: list[dict[str, str]]) -> str:

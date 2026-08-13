@@ -21,8 +21,8 @@ TAB_LABELS = {
     "products": "상품 추천",
 }
 
-APP_VERSION = "etf-full-screener-v5-els-all-issuers"
-ELS_CACHE_VERSION = "els-all-issuers-v1"
+APP_VERSION = "etf-full-screener-v6-els-score-top5"
+ELS_CACHE_VERSION = "els-score-top5-v1"
 
 
 @st.cache_data(ttl=DEFAULT_CACHE_SECONDS, show_spinner=False)
@@ -820,9 +820,9 @@ def render_els_products_section() -> None:
     if els.get("api_status"):
         st.caption(f"데이터 확인: {els['api_status']}")
     if items:
-        st.caption(f"{els.get('status', '공개 비교공시 기준')} · 청약 종료 또는 비지수형으로 판독된 항목은 제외")
+        st.caption(f"{els.get('status', '공개 비교공시 기준')} · 점수 상위 {len(items)}개만 표시")
         if els.get("issuer_summary"):
-            st.caption(f"표시 {len(items)}건 · 증권사별: {els['issuer_summary']}")
+            st.caption(f"후보군 증권사별: {els['issuer_summary']}")
         st.dataframe(items, hide_index=True, use_container_width=True)
     else:
         st.info(
@@ -996,7 +996,14 @@ def render_product_guide() -> None:
             - 금투협 조회가 실패하면 한국투자증권 별도 ELS API 설정, 미래에셋 공개 ELS/DLS 검색, 현대차증권 공개 청약 표, 대신증권 공개 청약 표 순서로 보조 확인합니다.
             - 상품명 또는 구조에 `ELS`, `주가연계증권`, `파생결합증권`이 있고, 기초자산이 `KOSPI`, `S&P`, `NASDAQ`, `EURO STOXX`, `NIKKEI`, `HSCEI` 같은 주가지수로만 구성된 상품을 순수 지수형 ELS로 분류합니다.
             - 청약 종료일이 지났거나 금투협 비고에 표시된 청약 종료 시간이 지난 상품은 목록에서 제외합니다.
-            - 표시 항목은 증권사, 상품명, 기초자산, 쿠폰, 조기상환 조건, 만기/상환주기, 청약기간, 최대손실률, 신용등급, 상세 링크입니다.
+            - 청약 가능한 순수 지수형 ELS 전체를 아래 100점 기준으로 점수화한 뒤 상위 5개만 보여줍니다.
+            - **손실방어력 35점:** 만기상환 기준이 낮을수록, 노낙인 구조이거나 낙인 기준이 낮을수록, 조기상환 배리어 평균이 낮을수록 유리합니다.
+            - **기초자산 안정성 20점:** 기초자산 수가 적을수록, S&P 500·Euro Stoxx 50·KOSPI200·Nikkei225 같은 광범위 대표지수일수록 유리합니다.
+            - **쿠폰 20점:** 연 12~24% 구간은 우호적으로 보되, 지나치게 높은 쿠폰은 위험 보상 성격이 강하다고 보고 가산폭을 제한합니다.
+            - **발행사 신용등급 15점:** AAA, AA+, AA, AA- 순으로 점수를 부여합니다.
+            - **만기/조기상환 10점:** 통상적인 3년 만기와 3~4개월 단위 조기상환 구조를 우호적으로 봅니다.
+            - TOP 5 목록은 발행사 신용위험 편중을 줄이기 위해 같은 증권사가 최대 2개까지만 들어오도록 보정합니다.
+            - 판정은 80점 이상 `우선 검토`, 70점 이상 `검토 가능`, 60점 이상 `조건부 검토`, 60점 미만 `주의`로 표시합니다.
 
             **2. CAN SLIM ETF TOP 2**
 
