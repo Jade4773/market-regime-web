@@ -438,12 +438,11 @@ def build_etf_recommendations(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(
         leaders,
         key=lambda item: (
-            item["listing"],
             item["leader_rank"],
             -item["relative_strength_score"],
             item["ticker"],
         ),
-    )
+    )[:2]
 
 
 def build_market_gates(items: dict[str, Any]) -> dict[str, dict[str, Any]]:

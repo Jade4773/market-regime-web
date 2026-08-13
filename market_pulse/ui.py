@@ -16,7 +16,7 @@ TAB_LABELS = {
     "products": "상품 추천",
 }
 
-APP_VERSION = "leader-etf-v2"
+APP_VERSION = "leader-etf-top2-v1"
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -803,7 +803,7 @@ def render_etf_recommendation_section(snapshot: dict[str, Any]) -> None:
         return
 
     st.caption(
-        "후보군 전체를 ETF별 상대강도 원점수로 랭킹한 뒤, 상위권 중 CAN SLIM 조건을 통과한 ETF만 표시합니다."
+        "후보군 전체를 ETF별 상대강도 원점수로 랭킹한 뒤, CAN SLIM 조건을 통과한 상위 2개만 표시합니다."
     )
     for listing in ["국내상장 ETF", "미국상장 ETF"]:
         listing_candidates = [item for item in candidates if item["listing"] == listing]
