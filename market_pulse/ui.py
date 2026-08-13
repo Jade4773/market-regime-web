@@ -21,7 +21,7 @@ TAB_LABELS = {
     "products": "상품 추천",
 }
 
-APP_VERSION = "etf-full-screener-v3-cache-3h"
+APP_VERSION = "etf-full-screener-v4-liquidity-cache-3h"
 
 
 @st.cache_data(ttl=DEFAULT_CACHE_SECONDS, show_spinner=False)
@@ -47,6 +47,14 @@ def format_cache_duration(seconds: int) -> str:
     if seconds % 60 == 0:
         return f"{seconds // 60}분"
     return f"{seconds}초"
+
+
+def format_trading_value(value: float | None, candidate: dict[str, Any]) -> str:
+    if value is None:
+        return "-"
+    if candidate.get("listing") == "국내상장 ETF":
+        return f"{value / 100_000_000:,.1f}억원"
+    return f"${value / 1_000_000:,.1f}M"
 
 
 def data_meta_text(item: dict[str, Any]) -> str:
@@ -944,6 +952,10 @@ def render_etf_candidate_card(candidate: dict[str, Any]) -> None:
             <strong>{format_number(candidate["buy_low"])} ~ {format_number(candidate["buy_high"])} · 거래량 {candidate["volume_ratio"]:.2f}배</strong>
           </div>
           <div class="ftd-line">
+            <span>유동성</span>
+            <strong>50일 거래량 {format_number(candidate["avg_volume50"], 0)} · 거래대금 {format_trading_value(candidate["avg_value50"], candidate)}</strong>
+          </div>
+          <div class="ftd-line">
             <span>21EMA / 50일선</span>
             <strong>{format_number(candidate["ma21"])} / {format_number(candidate["ma50"])}</strong>
           </div>
@@ -996,7 +1008,7 @@ def render_product_guide() -> None:
             - **L 상대강도 30점:** ETF 후보군 전체에서 20일·60일·120일 수익률 백분위를 계산합니다. 20일 10점, 60일 12점, 120일 8점으로 최근 강도를 더 크게 반영합니다.
             - **추세 20점:** 가격이 21EMA 위면 6점, 50일선 위면 7점, 50일선이 상승 중이면 4점, 200일선 위면 3점입니다.
             - **베이스/피봇 25점:** 25거래일 이상 베이스, 15% 이하 깊이, 피봇 -5% 이내 접근, 피봇 돌파, 돌파 시 거래량 1.4배 이상을 봅니다.
-            - **유동성 5점:** 50일 평균 거래량이 ETF별 최소 기준을 넘으면 3점, 충분히 크면 5점입니다.
+            - **유동성 5점:** 오닐식 수급 판단에 맞춰 50일 평균 거래량을 보고, ETF 실전 매매 보완 기준으로 50일 평균 거래대금도 함께 봅니다. 거래량과 거래대금이 모두 최소 기준을 넘으면 3점, 둘 다 기준의 3배 이상이면 5점입니다. 기본 최소 거래대금은 국내상장 ETF 10억 원, 미국상장 ETF 500만 달러입니다.
 
             **Action 판정**
 

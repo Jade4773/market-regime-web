@@ -51,13 +51,15 @@ INDEX_KEYWORDS = [
 ]
 
 KIS_MASTER_BASE_URL = "https://new.real.download.dws.co.kr/common/master"
-ETF_SCREENER_VERSION = "kis-universe-v3-cache-3h"
+ETF_SCREENER_VERSION = "kis-universe-v4-liquidity-cache-3h"
 ETF_SCREEN_CACHE_SECONDS = configured_cache_seconds("ETF_SCREEN_CACHE_SECONDS")
 ETF_PRELIMINARY_LIMIT = int(os.getenv("ETF_PRELIMINARY_LIMIT", "180"))
 ETF_FULL_ANALYSIS_LIMIT = int(os.getenv("ETF_FULL_ANALYSIS_LIMIT", "40"))
 ETF_SPARK_BATCH_SIZE = int(os.getenv("ETF_SPARK_BATCH_SIZE", "80"))
 ETF_SCREEN_MAX_UNIVERSE = int(os.getenv("ETF_SCREEN_MAX_UNIVERSE", "1000"))
 ETF_DOMESTIC_MIN_PREV_VOLUME = int(os.getenv("ETF_DOMESTIC_MIN_PREV_VOLUME", "1000"))
+ETF_DOMESTIC_MIN_AVG_VALUE = int(os.getenv("ETF_DOMESTIC_MIN_AVG_VALUE", "1000000000"))
+ETF_US_MIN_AVG_VALUE = int(os.getenv("ETF_US_MIN_AVG_VALUE", "5000000"))
 ETF_MIN_HISTORY_ROWS = 220
 
 _ETF_RECOMMENDATION_CACHE: dict[str, Any] = {}
@@ -1214,6 +1216,7 @@ def analyze_etf_candidate(
     pivot_distance_pct = pct(close, pivot) if pivot else None
     avg_volume20 = float(latest["avg_volume20"]) if pd.notna(latest["avg_volume20"]) else 0.0
     avg_volume50 = float(latest["avg_volume50"]) if pd.notna(latest["avg_volume50"]) else 0.0
+    avg_value50 = float(latest["avg_value50"]) if pd.notna(latest["avg_value50"]) else 0.0
     volume_ratio = float(latest["Volume"] / avg_volume20) if avg_volume20 else 0.0
     volume_change = pct(latest["Volume"], previous["Volume"])
     return20 = float(latest["return20"]) if pd.notna(latest["return20"]) else 0.0
@@ -1272,6 +1275,8 @@ def analyze_etf_candidate(
         "volume_ratio": volume_ratio,
         "avg_volume20": avg_volume20,
         "avg_volume50": avg_volume50,
+        "avg_value50": avg_value50,
+        "min_avg_value": min_avg_value_for_etf(candidate),
         "volume_change_pct": volume_change,
         "sell_signal": "관찰",
         "basis": (
@@ -1464,6 +1469,8 @@ def numeric_or_none(value: Any) -> float | None:
 
 def prepare_etf_history(history: pd.DataFrame) -> pd.DataFrame:
     df = history.sort_index().copy()
+    if "Value" not in df.columns or df["Value"].isna().all():
+        df["Value"] = df["Close"] * df["Volume"]
     df["pct_change"] = df["Close"].pct_change() * 100
     df["ema21"] = df["Close"].ewm(span=21, adjust=False).mean()
     df["ma20"] = df["Close"].rolling(20).mean()
@@ -1472,6 +1479,8 @@ def prepare_etf_history(history: pd.DataFrame) -> pd.DataFrame:
     df["ma50_slope20"] = df["ma50"].pct_change(20) * 100
     df["avg_volume20"] = df["Volume"].rolling(20).mean()
     df["avg_volume50"] = df["Volume"].rolling(50).mean()
+    df["avg_value20"] = df["Value"].rolling(20).mean()
+    df["avg_value50"] = df["Value"].rolling(50).mean()
     df["return20"] = df["Close"].pct_change(20) * 100
     df["return60"] = df["Close"].pct_change(60) * 100
     df["return120"] = df["Close"].pct_change(120) * 100
@@ -1551,14 +1560,23 @@ def base_pivot_score(item: dict[str, Any]) -> int:
 
 
 def liquidity_score(item: dict[str, Any]) -> int:
-    minimum = float(item.get("min_avg_volume", 0))
-    if minimum <= 0:
+    min_volume = float(item.get("min_avg_volume", 0))
+    min_value = float(item.get("min_avg_value", 0))
+    if min_volume <= 0 or min_value <= 0:
         return 0
-    if item["avg_volume50"] >= minimum * 3:
+    volume_ok = item["avg_volume50"] >= min_volume
+    value_ok = item["avg_value50"] >= min_value
+    if item["avg_volume50"] >= min_volume * 3 and item["avg_value50"] >= min_value * 3:
         return 5
-    if item["avg_volume50"] >= minimum:
+    if volume_ok and value_ok:
         return 3
     return 0
+
+
+def min_avg_value_for_etf(candidate: dict[str, Any]) -> int:
+    if candidate["listing"] == "국내상장 ETF":
+        return ETF_DOMESTIC_MIN_AVG_VALUE
+    return ETF_US_MIN_AVG_VALUE
 
 
 def etf_trading_status(item: dict[str, Any]) -> tuple[str, str, int]:
@@ -1639,6 +1657,8 @@ def etf_reasons(item: dict[str, Any]) -> tuple[list[str], list[str]]:
         risks.append(f"돌파는 보이지만 거래량 비율이 {item['volume_ratio']:.2f}배로 강한 확인에는 부족합니다.")
     if item["avg_volume50"] < float(item.get("min_avg_volume", 0)):
         risks.append("50일 평균 거래량이 최소 유동성 기준보다 낮습니다.")
+    if item["avg_value50"] < float(item.get("min_avg_value", 0)):
+        risks.append("50일 평균 거래대금이 최소 유동성 기준보다 낮습니다.")
     if not risks:
         risks.append("주요 위험 신호는 제한적입니다.")
     return positives[:4], risks[:4]
