@@ -22,10 +22,11 @@ TAB_LABELS = {
 }
 
 APP_VERSION = "etf-full-screener-v5-els-all-issuers"
+ELS_CACHE_VERSION = "els-all-issuers-v1"
 
 
 @st.cache_data(ttl=DEFAULT_CACHE_SECONDS, show_spinner=False)
-def get_els_products() -> dict[str, Any]:
+def get_els_products(cache_version: str) -> dict[str, Any]:
     return fetch_public_els_products()
 
 
@@ -813,7 +814,7 @@ def render_products_tab(snapshot: dict[str, Any]) -> None:
 def render_els_products_section() -> None:
     st.markdown('<div class="section-title">공개 ELS 청약 모니터</div>', unsafe_allow_html=True)
     with st.spinner("공개 ELS 청약 정보를 확인하는 중입니다."):
-        els = get_els_products()
+        els = get_els_products(ELS_CACHE_VERSION)
 
     items = els.get("items", [])
     if els.get("api_status"):
