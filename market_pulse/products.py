@@ -68,6 +68,7 @@ ETF_DOMESTIC_MIN_PREV_VOLUME = int(os.getenv("ETF_DOMESTIC_MIN_PREV_VOLUME", "10
 ETF_DOMESTIC_MIN_AVG_VALUE = int(os.getenv("ETF_DOMESTIC_MIN_AVG_VALUE", "1000000000"))
 ETF_US_MIN_AVG_VALUE = int(os.getenv("ETF_US_MIN_AVG_VALUE", "5000000"))
 ETF_MIN_HISTORY_ROWS = 220
+ELS_DISPLAY_LIMIT = int(os.getenv("ELS_DISPLAY_LIMIT", "80"))
 
 _ETF_RECOMMENDATION_CACHE: dict[str, Any] = {}
 _ETF_UNIVERSE_CACHE: dict[str, Any] = {}
@@ -603,11 +604,13 @@ def fetch_kofia_els_products() -> dict[str, Any]:
         )
 
     return {
-        "items": products[:12],
+        "items": limit_els_products(products),
         "status": (
             "금융투자협회 청약정보 비교공시 기준 "
             f"· 전체 {stats.get('rows', 0)}건 중 순수 지수형 ELS {stats.get('matched', 0)}건"
         ),
+        "issuer_summary": summarize_els_issuers(products),
+        "matched_count": len(products),
         "source_url": KOFIA_ELS_PAGE_URL,
         "guide_url": KOFIA_DISCLOSURE_HOME_URL,
         "notice_url": DART_DERIVATIVE_URL,
@@ -708,8 +711,10 @@ def fetch_els_products_from_configured_kis_api() -> dict[str, Any]:
 
     return {
         "attempted": True,
-        "items": products[:12],
+        "items": limit_els_products(products),
         "status": "한국투자증권 Open API 기준",
+        "issuer_summary": summarize_els_issuers(products),
+        "matched_count": len(products),
         "source_url": KOFIA_ELS_PAGE_URL,
         "guide_url": KOFIA_DISCLOSURE_HOME_URL,
         "notice_url": DART_DERIVATIVE_URL,
@@ -788,8 +793,10 @@ def fetch_mirae_els_products() -> dict[str, Any]:
         return empty_els_result("미래에셋 공개 검색에서 현재 청약 가능한 순수 지수형 ELS가 없습니다.", source_url=MIRAE_ELS_SEARCH_URL)
 
     return {
-        "items": products[:12],
+        "items": limit_els_products(products),
         "status": f"미래에셋 공개 ELS/DLS 검색 기준 · 순수 지수형 ELS {len(products)}건",
+        "issuer_summary": summarize_els_issuers(products),
+        "matched_count": len(products),
         "source_url": MIRAE_ELS_SEARCH_URL,
         "guide_url": MIRAE_ELS_SEARCH_URL,
         "notice_url": MIRAE_ELS_NOTICE_URL,
@@ -857,8 +864,10 @@ def fetch_html_els_products(url: str, issuer: str, empty_message: str) -> dict[s
         return empty_els_result(empty_message, source_url=url)
 
     return {
-        "items": products[:12],
+        "items": limit_els_products(products),
         "status": f"{issuer} 공개 청약 표 기준 · 순수 지수형 ELS {len(products)}건",
+        "issuer_summary": summarize_els_issuers(products),
+        "matched_count": len(products),
         "source_url": url,
         "guide_url": url,
         "notice_url": DART_DERIVATIVE_URL,
@@ -1167,6 +1176,25 @@ def dedupe_products(products: list[dict[str, str]]) -> list[dict[str, str]]:
         seen.add(key)
         unique.append(product)
     return unique
+
+
+def limit_els_products(products: list[dict[str, str]]) -> list[dict[str, str]]:
+    return products[: max(1, ELS_DISPLAY_LIMIT)]
+
+
+def summarize_els_issuers(products: list[dict[str, str]]) -> str:
+    counts: dict[str, int] = {}
+    for product in products:
+        issuer = product.get("증권사") or "-"
+        counts[issuer] = counts.get(issuer, 0) + 1
+    if not counts:
+        return ""
+
+    summary = [f"{issuer} {count}건" for issuer, count in sorted(counts.items())]
+    if len(summary) <= 8:
+        return ", ".join(summary)
+    shown = ", ".join(summary[:8])
+    return f"{shown} 외 {len(summary) - 8}개사"
 
 
 def build_etf_recommendations(snapshot: dict[str, Any]) -> list[dict[str, Any]]:

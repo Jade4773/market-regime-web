@@ -820,6 +820,8 @@ def render_els_products_section() -> None:
         st.caption(f"데이터 확인: {els['api_status']}")
     if items:
         st.caption(f"{els.get('status', '공개 비교공시 기준')} · 청약 종료 또는 비지수형으로 판독된 항목은 제외")
+        if els.get("issuer_summary"):
+            st.caption(f"표시 {len(items)}건 · 증권사별: {els['issuer_summary']}")
         st.dataframe(items, hide_index=True, use_container_width=True)
     else:
         st.info(
