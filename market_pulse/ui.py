@@ -21,7 +21,7 @@ TAB_LABELS = {
     "products": "상품 추천",
 }
 
-APP_VERSION = "etf-can-slim-spec-v1"
+APP_VERSION = "etf-full-screener-v1"
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -838,6 +838,16 @@ def render_etf_recommendation_section(snapshot: dict[str, Any]) -> None:
     st.caption(
         "점수와 매수 가능 여부를 분리합니다. 점수가 높아도 피봇 돌파와 거래량 확인 전이면 `대기`로 표시합니다."
     )
+    summary = candidates[0].get("screen_summary", {})
+    if summary:
+        st.caption(
+            f"검토 범위: {summary.get('universe_source', 'ETF universe')} "
+            f"{summary.get('universe_count', 0):,}개 중 "
+            f"주식형·유동성 필터 {summary.get('screenable_count', 0):,}개, "
+            f"1차 상위권 {summary.get('preliminary_count', 0):,}개, "
+            f"상세 재계산 {summary.get('analyzed_count', 0):,}개 · "
+            f"최종 가격 기준: {summary.get('price_source', '-')}"
+        )
     cols = st.columns(2)
     for col, candidate in zip(cols, candidates):
         with col:
@@ -968,6 +978,10 @@ def render_product_guide() -> None:
 
             ETF는 붙임 문서의 `ETF CAN SLIM Score` 방식에 맞춰 100점 만점으로 계산합니다.
             단, **점수가 높다는 것과 지금 매수 가능하다는 것은 분리**해서 보여줍니다.
+
+            - **ETF universe:** 한국투자증권 국내/해외 종목정보파일에서 국내상장 ETF와 미국상장 ETF를 가져옵니다. 레버리지·인버스 ETF는 제외합니다.
+            - **1차 점수화:** 전체 universe에서 비주식형·저유동성·레버리지·인버스 상품을 제외한 뒤, 20일·60일·120일 수익률과 추세 위치를 일괄 계산해 상대강도 백분위를 먼저 만듭니다.
+            - **상세 재계산:** 1차 상위권 ETF는 한투 일봉 API를 우선 사용해 OHLCV, 21EMA, 50일선, 200일선, 베이스, 피봇, 거래량 비율을 다시 계산합니다. 한투 일봉이 실패하면 Yahoo 가격으로 대체합니다.
 
             - **M 시장 방향 20점:** 유효 FTD가 있고 분산일이 제한적이면 20점, 상승장이지만 압박을 받으면 10점, 조정장이면 0점입니다.
             - **L 상대강도 30점:** ETF 후보군 전체에서 20일·60일·120일 수익률 백분위를 계산합니다. 20일 10점, 60일 12점, 120일 8점으로 최근 강도를 더 크게 반영합니다.

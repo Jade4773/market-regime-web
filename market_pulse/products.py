@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import io
 import json
+import math
 import os
 import re
+import time
+import zipfile
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from typing import Any
@@ -10,7 +14,7 @@ from typing import Any
 import pandas as pd
 import requests
 
-from market_pulse.data import fetch_yahoo_chart, kis_get
+from market_pulse.data import fetch_yahoo_chart, kis_date_range, kis_get, kis_rows_to_frame
 
 
 ELS_SUBSCRIPTION_URL = (
@@ -38,6 +42,137 @@ INDEX_KEYWORDS = [
     "닛케이",
     "HSCEI",
     "항셍",
+]
+
+KIS_MASTER_BASE_URL = "https://new.real.download.dws.co.kr/common/master"
+ETF_SCREEN_CACHE_SECONDS = int(os.getenv("ETF_SCREEN_CACHE_SECONDS", "3600"))
+ETF_PRELIMINARY_LIMIT = int(os.getenv("ETF_PRELIMINARY_LIMIT", "180"))
+ETF_FULL_ANALYSIS_LIMIT = int(os.getenv("ETF_FULL_ANALYSIS_LIMIT", "40"))
+ETF_SPARK_BATCH_SIZE = int(os.getenv("ETF_SPARK_BATCH_SIZE", "80"))
+ETF_SCREEN_MAX_UNIVERSE = int(os.getenv("ETF_SCREEN_MAX_UNIVERSE", "1000"))
+ETF_DOMESTIC_MIN_PREV_VOLUME = int(os.getenv("ETF_DOMESTIC_MIN_PREV_VOLUME", "1000"))
+
+_ETF_RECOMMENDATION_CACHE: dict[str, Any] = {}
+_ETF_UNIVERSE_CACHE: dict[str, Any] = {}
+
+DOMESTIC_KOSPI_FIELD_SPECS = [
+    2, 1, 4, 4, 4,
+    1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1,
+    1, 9, 5, 5, 1,
+    1, 1, 2, 1, 1,
+    1, 2, 2, 2, 3,
+    1, 3, 12, 12, 8,
+    15, 21, 2, 7, 1,
+    1, 1, 1, 1, 9,
+    9, 9, 5, 9, 8,
+    9, 3, 1, 1, 1,
+]
+
+DOMESTIC_KOSPI_COLUMNS = [
+    "그룹코드", "시가총액규모", "지수업종대분류", "지수업종중분류", "지수업종소분류",
+    "제조업", "저유동성", "지배구조지수종목", "KOSPI200섹터업종", "KOSPI100",
+    "KOSPI50", "KRX", "ETP", "ELW발행", "KRX100",
+    "KRX자동차", "KRX반도체", "KRX바이오", "KRX은행", "SPAC",
+    "KRX에너지화학", "KRX철강", "단기과열", "KRX미디어통신", "KRX건설",
+    "Non1", "KRX증권", "KRX선박", "KRX섹터_보험", "KRX섹터_운송",
+    "SRI", "기준가", "매매수량단위", "시간외수량단위", "거래정지",
+    "정리매매", "관리종목", "시장경고", "경고예고", "불성실공시",
+    "우회상장", "락구분", "액면변경", "증자구분", "증거금비율",
+    "신용가능", "신용기간", "전일거래량", "액면가", "상장일자",
+    "상장주수", "자본금", "결산월", "공모가", "우선주",
+    "공매도과열", "이상급등", "KRX300", "KOSPI", "매출액",
+    "영업이익", "경상이익", "당기순이익", "ROE", "기준년월",
+    "시가총액", "그룹사코드", "회사신용한도초과", "담보대출가능", "대주가능",
+]
+
+OVERSEAS_MASTER_COLUMNS = [
+    "National code",
+    "Exchange id",
+    "Exchange code",
+    "Exchange name",
+    "Symbol",
+    "realtime symbol",
+    "Korea name",
+    "English name",
+    "Security type",
+    "currency",
+    "float position",
+    "data type",
+    "base price",
+    "Bid order size",
+    "Ask order size",
+    "market start time",
+    "market end time",
+    "DR",
+    "DR code",
+    "industry",
+    "index constituent",
+    "tick type",
+    "ETF type",
+    "tick detail",
+]
+
+EXCLUDED_ETF_TERMS = [
+    "인버스",
+    "레버리지",
+    "곱버스",
+    "선물인버스",
+    "2X",
+    "3X",
+    "4X",
+    "-1X",
+    "-2X",
+    "-3X",
+    "BEAR",
+    "BULL 2X",
+    "BULL 3X",
+    "ULTRA",
+    "ULTRAPRO",
+    "DIREXION DAILY",
+    "PROSHARES ULTRA",
+    "LEVERAGE SHARES",
+]
+
+NON_EQUITY_ETF_TERMS = [
+    "채권",
+    "국고",
+    "회사채",
+    "CD금리",
+    "머니",
+    "단기금리",
+    "커버드콜",
+    "월배당커버드",
+    "BOND",
+    "TREASURY",
+    "CLO",
+    "MONEY MARKET",
+    "ULTRA SHORT",
+    "COVERED CALL",
+    "BUYWRITE",
+    "OPTION INCOME",
+    "FUTURES",
+    "FUTURE",
+    "COMMODITY",
+    "COMMODITIES",
+    "GOLD",
+    "SILVER",
+    "OIL",
+    "NATURAL GAS",
+    "TANKER",
+    "SHIPPING",
+    "FREIGHT",
+    "BITCOIN",
+    "ETHER",
+    "CRYPTO",
+    "원유",
+    "금선물",
+    "은선물",
+    "비트코인",
+    "가상자산",
 ]
 
 
@@ -105,6 +240,240 @@ ETF_CANDIDATES = [
     etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="EWY", yahoo_ticker="EWY", name="iShares MSCI South Korea ETF", country="대한민국", index="MSCI Korea", note="한국 시장의 미국상장 대체 ETF", min_avg_volume=50000),
     etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="EWW", yahoo_ticker="EWW", name="iShares MSCI Mexico ETF", country="멕시코", index="MSCI Mexico", note="멕시코 주식시장 주도 여부 확인", min_avg_volume=20000),
 ]
+
+
+def build_etf_screen_universe() -> list[dict[str, Any]]:
+    cached = _ETF_UNIVERSE_CACHE.get("items")
+    now = time.time()
+    if cached and now - _ETF_UNIVERSE_CACHE.get("created_at", 0) < 24 * 60 * 60:
+        return cached
+
+    candidates: list[dict[str, Any]] = []
+    try:
+        candidates.extend(fetch_kis_domestic_etf_universe())
+    except Exception:
+        candidates.extend([item for item in ETF_CANDIDATES if item["listing"] == "국내상장 ETF"])
+
+    try:
+        candidates.extend(fetch_kis_overseas_etf_universe())
+    except Exception:
+        candidates.extend([item for item in ETF_CANDIDATES if item["listing"] == "미국상장 ETF"])
+
+    unique = dedupe_etf_candidates(candidates)
+    if not unique:
+        unique = ETF_CANDIDATES
+
+    _ETF_UNIVERSE_CACHE["items"] = unique
+    _ETF_UNIVERSE_CACHE["created_at"] = now
+    return unique
+
+
+def fetch_kis_domestic_etf_universe() -> list[dict[str, Any]]:
+    rows = download_zipped_master("kospi_code.mst.zip", "kospi_code.mst").decode("cp949").splitlines()
+    candidates = []
+    for row in rows:
+        part1 = row[:-228]
+        part2 = row[-228:]
+        code = part1[:9].strip()
+        name = part1[21:].strip()
+        if not code or not name:
+            continue
+        details = pd.read_fwf(
+            io.StringIO(part2),
+            widths=DOMESTIC_KOSPI_FIELD_SPECS,
+            names=DOMESTIC_KOSPI_COLUMNS,
+        ).iloc[0].to_dict()
+        if str(details.get("그룹코드", "")).strip() != "E":
+            continue
+        if is_excluded_etf_name(name):
+            continue
+
+        prev_volume = int_or_zero(details.get("전일거래량"))
+        candidates.append(
+            etf_candidate(
+                market_group=domestic_market_group(name),
+                signal_key=domestic_signal_key(name),
+                listing="국내상장 ETF",
+                ticker=code,
+                yahoo_ticker=f"{code}.KS",
+                name=name,
+                country=infer_investment_country(name),
+                index=infer_index_label(name),
+                note="한국투자증권 국내 ETF 마스터 기준",
+                min_avg_volume=max(1000, min(prev_volume, 100000)),
+                category=infer_category_from_text(name),
+            )
+            | {
+                "source_universe": "한국투자증권 국내 종목정보파일",
+                "exchange_code": "KRX",
+                "prelim_volume": prev_volume,
+            }
+        )
+    return candidates
+
+
+def fetch_kis_overseas_etf_universe() -> list[dict[str, Any]]:
+    candidates = []
+    for market_code in ["nas", "nys", "ams"]:
+        file_name = f"{market_code.upper()}MST.COD"
+        payload = download_zipped_master(f"{market_code}mst.cod.zip", file_name)
+        df = pd.read_table(io.BytesIO(payload), sep="\t", encoding="cp949")
+        df.columns = OVERSEAS_MASTER_COLUMNS
+        filtered = df[
+            df["Security type"].astype(str).eq("3")
+            & df["ETF type"].astype(str).isin(["001", "005"])
+            & df["currency"].astype(str).eq("USD")
+        ]
+        for _, row in filtered.iterrows():
+            symbol = str(row["Symbol"]).strip()
+            korean_name = str(row["Korea name"]).strip()
+            english_name = str(row["English name"]).strip()
+            name = english_name or korean_name or symbol
+            if not symbol or is_excluded_etf_name(f"{symbol} {korean_name} {english_name}"):
+                continue
+            candidates.append(
+                etf_candidate(
+                    market_group="us",
+                    signal_key=overseas_signal_key(name),
+                    listing="미국상장 ETF",
+                    ticker=symbol,
+                    yahoo_ticker=symbol,
+                    name=name,
+                    country=infer_investment_country(f"{korean_name} {english_name}"),
+                    index=infer_index_label(f"{korean_name} {english_name}"),
+                    note="한국투자증권 해외 ETF 마스터 기준",
+                    min_avg_volume=20000,
+                    category=infer_category_from_text(f"{korean_name} {english_name}"),
+                )
+                | {
+                    "source_universe": "한국투자증권 해외 종목정보파일",
+                    "exchange_code": str(row["Exchange code"]).strip(),
+                    "korean_name": korean_name,
+                }
+            )
+    return candidates
+
+
+def download_zipped_master(zip_name: str, member_name: str) -> bytes:
+    response = requests.get(
+        f"{KIS_MASTER_BASE_URL}/{zip_name}",
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=20,
+    )
+    response.raise_for_status()
+    archive = zipfile.ZipFile(io.BytesIO(response.content))
+    if member_name not in archive.namelist():
+        member_name = archive.namelist()[0]
+    return archive.read(member_name)
+
+
+def dedupe_etf_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen = set()
+    unique = []
+    for candidate in candidates:
+        key = (candidate["listing"], candidate["ticker"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique
+
+
+def is_excluded_etf_name(text: str) -> bool:
+    upper = text.upper()
+    return any(term.upper() in upper for term in EXCLUDED_ETF_TERMS)
+
+
+def domestic_market_group(name: str) -> str:
+    upper = name.upper()
+    if any(term in upper for term in ["미국", "NASDAQ", "S&P", "필라델피아", "글로벌"]):
+        return "us"
+    return "korea"
+
+
+def domestic_signal_key(name: str) -> str:
+    upper = name.upper()
+    if any(term in upper for term in ["NASDAQ", "나스닥", "반도체", "TECH", "필라델피아"]):
+        return "nasdaq_composite"
+    if any(term in upper for term in ["S&P", "미국", "글로벌"]):
+        return "sp500"
+    if "200" in upper:
+        return "kospi200"
+    return "kospi"
+
+
+def overseas_signal_key(name: str) -> str:
+    upper = name.upper()
+    if any(term in upper for term in ["NASDAQ", "SEMICONDUCTOR", "SOFTWARE", "TECH"]):
+        return "nasdaq_composite"
+    return "sp500"
+
+
+def infer_investment_country(text: str) -> str:
+    upper = text.upper()
+    for keyword, country in [
+        ("KOREA", "대한민국"),
+        ("한국", "대한민국"),
+        ("JAPAN", "일본"),
+        ("일본", "일본"),
+        ("TAIWAN", "대만"),
+        ("대만", "대만"),
+        ("INDIA", "인도"),
+        ("인도", "인도"),
+        ("CHINA", "중국"),
+        ("중국", "중국"),
+        ("MEXICO", "멕시코"),
+        ("멕시코", "멕시코"),
+        ("EUROPE", "유럽"),
+        ("유럽", "유럽"),
+        ("GLOBAL", "글로벌"),
+        ("글로벌", "글로벌"),
+        ("US ", "미국"),
+        ("USA", "미국"),
+        ("미국", "미국"),
+    ]:
+        if keyword in upper:
+            return country
+    return "미국" if re.search(r"\b(S&P|NASDAQ|DOW|RUSSELL)\b", upper) else "글로벌"
+
+
+def infer_index_label(text: str) -> str:
+    upper = text.upper()
+    if "NASDAQ" in upper or "나스닥" in upper:
+        return "NASDAQ"
+    if "S&P" in upper:
+        return "S&P 500"
+    if "SEMICONDUCTOR" in upper or "반도체" in upper:
+        return "Semiconductors"
+    if "KOSPI 200" in upper or "200" in upper and "KODEX" in upper:
+        return "KOSPI 200"
+    if "KOSPI" in upper or "코스피" in upper:
+        return "KOSPI"
+    if "MSCI" in upper:
+        return "MSCI"
+    if "RUSSELL" in upper:
+        return "Russell"
+    return "ETF"
+
+
+def infer_category_from_text(text: str) -> str:
+    upper = text.upper()
+    if any(term in upper for term in ["채권", "BOND", "TREASURY", "국고", "회사채", "CLO", "머니", "CD금리"]):
+        return "bond"
+    if any(term in upper for term in ["SEMICONDUCTOR", "SOFTWARE", "TECH", "반도체", "2차전지", "바이오", "은행"]):
+        return "sector"
+    if any(term in upper for term in ["MSCI", "JAPAN", "INDIA", "TAIWAN", "CHINA", "KOREA", "일본", "인도", "대만", "중국"]):
+        return "country"
+    return "broad"
+
+
+def int_or_zero(value: Any) -> int:
+    try:
+        if value is None or pd.isna(value):
+            return 0
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
 
 
 class TableTextParser(HTMLParser):
@@ -404,11 +773,21 @@ def dedupe_products(products: list[dict[str, str]]) -> list[dict[str, str]]:
 
 
 def build_etf_recommendations(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    cache_key = etf_recommendation_cache_key(snapshot)
+    cached = _ETF_RECOMMENDATION_CACHE.get(cache_key)
+    now = time.time()
+    if cached and now - cached["created_at"] < ETF_SCREEN_CACHE_SECONDS:
+        return cached["items"]
+
     items = snapshot.get("items", {})
     market_gates = build_market_gates(items)
+    universe = build_etf_screen_universe()
+    screenable_count = len(select_screenable_etf_universe(universe))
+    preliminary_candidates = rank_preliminary_etf_universe(universe)
+    full_analysis_targets = preliminary_candidates[:ETF_FULL_ANALYSIS_LIMIT]
     analyzed_candidates = []
 
-    for candidate in ETF_CANDIDATES:
+    for candidate in full_analysis_targets:
         market_gate = market_gates.get(candidate["market_group"])
         if not market_gate:
             continue
@@ -447,7 +826,185 @@ def build_etf_recommendations(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     )[:2]
     for display_rank, item in enumerate(selected, start=1):
         item["display_rank"] = display_rank
+        item["screen_summary"] = {
+            "universe_count": len(universe),
+            "screenable_count": screenable_count,
+            "preliminary_count": len(preliminary_candidates),
+            "analyzed_count": len(analyzed_candidates),
+            "universe_source": "한국투자증권 종목정보파일",
+            "price_source": item.get("data_source", "-"),
+        }
+    _ETF_RECOMMENDATION_CACHE[cache_key] = {"created_at": now, "items": selected}
     return selected
+
+
+def etf_recommendation_cache_key(snapshot: dict[str, Any]) -> str:
+    items = snapshot.get("items", {})
+    parts = []
+    for key in sorted(items):
+        item = items[key]
+        parts.append(
+            f"{key}:{item.get('last_date')}:{item.get('regime')}:{item.get('distribution_count')}"
+        )
+    return "|".join(parts)
+
+
+def rank_preliminary_etf_universe(universe: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    screenable_universe = select_screenable_etf_universe(universe)
+    histories = fetch_yahoo_spark_histories([item["yahoo_ticker"] for item in screenable_universe])
+    scored = []
+    for candidate in screenable_universe:
+        series = histories.get(candidate["yahoo_ticker"])
+        if series is None or len(series) < 140:
+            continue
+        prelim = preliminary_etf_metrics(series)
+        if not prelim:
+            continue
+        item = {**candidate, **prelim}
+        scored.append(item)
+
+    if not scored:
+        return ETF_CANDIDATES
+
+    assign_preliminary_percentiles(scored)
+    return sorted(
+        scored,
+        key=lambda item: (
+            -item["preliminary_score"],
+            -item["return60_universe_percentile"],
+            item["ticker"],
+        ),
+    )[:ETF_PRELIMINARY_LIMIT]
+
+
+def select_screenable_etf_universe(universe: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    screenable = [item for item in universe if is_screenable_equity_etf(item)]
+    return sorted(
+        screenable,
+        key=lambda item: (
+            item["listing"] != "국내상장 ETF",
+            -int(item.get("prelim_volume", 0)),
+            item["ticker"],
+        ),
+    )[:ETF_SCREEN_MAX_UNIVERSE]
+
+
+def is_screenable_equity_etf(candidate: dict[str, Any]) -> bool:
+    text = f"{candidate.get('ticker', '')} {candidate.get('name', '')} {candidate.get('korean_name', '')}"
+    upper = text.upper()
+    if any(term.upper() in upper for term in NON_EQUITY_ETF_TERMS):
+        return False
+    if candidate.get("category") == "bond":
+        return False
+    if candidate["listing"] == "국내상장 ETF":
+        return int(candidate.get("prelim_volume", 0)) >= ETF_DOMESTIC_MIN_PREV_VOLUME
+    return len(candidate["ticker"]) <= 5
+
+
+def fetch_yahoo_spark_histories(symbols: list[str]) -> dict[str, pd.Series]:
+    histories: dict[str, pd.Series] = {}
+    unique_symbols = list(dict.fromkeys(symbol for symbol in symbols if symbol))
+    for start in range(0, len(unique_symbols), ETF_SPARK_BATCH_SIZE):
+        batch = unique_symbols[start : start + ETF_SPARK_BATCH_SIZE]
+        histories.update(fetch_yahoo_spark_batch(batch))
+    return histories
+
+
+def fetch_yahoo_spark_batch(symbols: list[str]) -> dict[str, pd.Series]:
+    if not symbols:
+        return {}
+    try:
+        response = requests.get(
+            "https://query1.finance.yahoo.com/v8/finance/spark",
+            params={
+                "symbols": ",".join(symbols),
+                "range": "18mo",
+                "interval": "1d",
+            },
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except Exception:
+        return split_spark_batch(symbols)
+
+    histories: dict[str, pd.Series] = {}
+    for symbol in symbols:
+        data = payload.get(symbol) or {}
+        timestamps = data.get("timestamp") or []
+        closes = data.get("close") or []
+        if not timestamps or not closes:
+            continue
+        frame = pd.DataFrame(
+            {"Close": closes},
+            index=[
+                datetime.fromtimestamp(ts, tz=timezone.utc).date()
+                for ts in timestamps
+            ],
+        )
+        frame.index = pd.to_datetime(frame.index)
+        series = frame["Close"].dropna().sort_index()
+        if len(series) >= 140:
+            histories[symbol] = series
+    if not histories and len(symbols) > 1:
+        return split_spark_batch(symbols)
+    return histories
+
+
+def split_spark_batch(symbols: list[str]) -> dict[str, pd.Series]:
+    if len(symbols) <= 1:
+        return {}
+    midpoint = len(symbols) // 2
+    histories = fetch_yahoo_spark_batch(symbols[:midpoint])
+    histories.update(fetch_yahoo_spark_batch(symbols[midpoint:]))
+    return histories
+
+
+def preliminary_etf_metrics(close: pd.Series) -> dict[str, Any] | None:
+    if len(close) < 140:
+        return None
+    latest = float(close.iloc[-1])
+    ma21 = float(close.ewm(span=21, adjust=False).mean().iloc[-1])
+    ma50 = float(close.rolling(50).mean().iloc[-1])
+    ma200 = float(close.rolling(200).mean().iloc[-1]) if len(close) >= 200 else None
+    high120 = float(close.rolling(120).max().iloc[-1])
+    return20 = pct(latest, close.iloc[-21])
+    return60 = pct(latest, close.iloc[-61])
+    return120 = pct(latest, close.iloc[-121])
+    near_high = pct(latest, high120)
+    trend_bonus = 0
+    if latest > ma21:
+        trend_bonus += 8
+    if latest > ma50:
+        trend_bonus += 10
+    if ma200 and latest > ma200:
+        trend_bonus += 5
+    preliminary_score = return20 * 0.35 + return60 * 0.45 + return120 * 0.20 + trend_bonus
+    if near_high >= -5:
+        preliminary_score += 8
+    elif near_high >= -10:
+        preliminary_score += 4
+    return {
+        "prelim_last_price": latest,
+        "prelim_ma50": ma50,
+        "prelim_return20": return20,
+        "prelim_return60": return60,
+        "prelim_return120": return120,
+        "preliminary_score": preliminary_score,
+    }
+
+
+def assign_preliminary_percentiles(candidates: list[dict[str, Any]]) -> None:
+    for source_key, target_key in [
+        ("prelim_return20", "return20_universe_percentile"),
+        ("prelim_return60", "return60_universe_percentile"),
+        ("prelim_return120", "return120_universe_percentile"),
+    ]:
+        values = sorted(item[source_key] for item in candidates)
+        total = len(values)
+        for item in candidates:
+            item[target_key] = percentile_rank(values, item[source_key], total)
 
 
 def build_etf_market_summary(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
@@ -565,7 +1122,8 @@ def assign_relative_strength_components(candidates: list[dict[str, Any]]) -> Non
         values = sorted(item[period_key] for item in candidates)
         total = len(values)
         for item in candidates:
-            percentile = percentile_rank(values, item[period_key], total)
+            universe_key = f"{period_key}_universe_percentile"
+            percentile = int(item.get(universe_key) or percentile_rank(values, item[period_key], total))
             item[f"{period_key}_percentile"] = percentile
             item["components"][score_key] = round(percentile / 99 * max_points)
 
@@ -628,7 +1186,8 @@ def analyze_etf_candidate(
     benchmark_item: dict[str, Any],
 ) -> dict[str, Any] | None:
     try:
-        df = prepare_etf_history(fetch_yahoo_chart(candidate["yahoo_ticker"]))
+        history, history_source = fetch_etf_history(candidate)
+        df = prepare_etf_history(history)
     except Exception:
         return None
     if len(df) < 220:
@@ -712,9 +1271,172 @@ def analyze_etf_candidate(
             f"활성 분산일 {market_item.get('distribution_count', 0)}회, "
             f"{benchmark_item['name']} 대비 60일 초과수익 {return60 - benchmark_return60:+.2f}%"
         ),
-        "data_source": "Yahoo Finance ETF 가격",
+        "data_source": history_source,
         "data_status": market_item.get("data_status", "-"),
     }
+
+
+def fetch_etf_history(candidate: dict[str, Any]) -> tuple[pd.DataFrame, str]:
+    try:
+        if candidate["listing"] == "국내상장 ETF":
+            return fetch_kis_domestic_etf_chart(candidate["ticker"]), "한국투자증권 ETF 일봉"
+        if candidate["listing"] == "미국상장 ETF":
+            return fetch_kis_overseas_etf_chart(
+                candidate["ticker"],
+                candidate.get("exchange_code", ""),
+            ), "한국투자증권 해외 ETF 일봉"
+    except Exception:
+        pass
+    return fetch_yahoo_chart(candidate["yahoo_ticker"]), "Yahoo Finance ETF 가격"
+
+
+def fetch_kis_domestic_etf_chart(code: str) -> pd.DataFrame:
+    start_date, end_date = kis_date_range()
+    rows = kis_paginated_rows_for_etf(
+        path="/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+        tr_id="FHKST03010100",
+        params={
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": code,
+            "FID_INPUT_DATE_1": start_date,
+            "FID_INPUT_DATE_2": end_date,
+            "FID_PERIOD_DIV_CODE": "D",
+            "FID_ORG_ADJ_PRC": "0",
+        },
+    )
+    return kis_rows_to_frame(
+        rows,
+        date_key="stck_bsop_date",
+        open_key="stck_oprc",
+        high_key="stck_hgpr",
+        low_key="stck_lwpr",
+        close_key="stck_clpr",
+        volume_key="acml_vol",
+        value_key="acml_tr_pbmn",
+        source="한국투자증권",
+        volume_source="한국투자증권 ETF 거래량",
+    )
+
+
+def fetch_kis_overseas_etf_chart(symbol: str, exchange_code: str) -> pd.DataFrame:
+    exchange = normalize_kis_overseas_exchange(exchange_code)
+    payload, _ = kis_get(
+        "/uapi/overseas-price/v1/quotations/dailyprice",
+        "HHDFS76240000",
+        {
+            "AUTH": "",
+            "EXCD": exchange,
+            "SYMB": symbol,
+            "GUBN": "0",
+            "BYMD": "",
+            "MODP": "0",
+        },
+    )
+    rows = payload.get("output2") or payload.get("output") or []
+    if isinstance(rows, dict):
+        rows = [rows]
+    return flexible_rows_to_frame(
+        rows,
+        date_keys=["xymd", "stck_bsop_date", "ovrs_bsop_date"],
+        open_keys=["open", "ovrs_prod_oprc", "stck_oprc"],
+        high_keys=["high", "ovrs_prod_hgpr", "stck_hgpr"],
+        low_keys=["low", "ovrs_prod_lwpr", "stck_lwpr"],
+        close_keys=["clos", "last", "ovrs_nmix_prpr", "stck_clpr"],
+        volume_keys=["tvol", "acml_vol", "evol"],
+        source="한국투자증권",
+        volume_source="한국투자증권 해외 ETF 거래량",
+    )
+
+
+def kis_paginated_rows_for_etf(
+    path: str,
+    tr_id: str,
+    params: dict[str, str],
+    max_depth: int = 8,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    tr_cont = ""
+    for _ in range(max_depth):
+        payload, next_cont = kis_get(path, tr_id, params, tr_cont)
+        chunk = payload.get("output2") or payload.get("output") or []
+        if isinstance(chunk, dict):
+            chunk = [chunk]
+        rows.extend(chunk)
+        if next_cont not in {"M", "F"}:
+            break
+        tr_cont = "N"
+        time.sleep(0.1)
+    return rows
+
+
+def normalize_kis_overseas_exchange(exchange_code: str) -> str:
+    upper = (exchange_code or "").upper()
+    if upper in {"NAS", "NASD", "NASDAQ"}:
+        return "NAS"
+    if upper in {"NYS", "NYSE"}:
+        return "NYS"
+    if upper in {"AMS", "AMEX", "ASE"}:
+        return "AMS"
+    return upper or "NAS"
+
+
+def flexible_rows_to_frame(
+    rows: list[dict[str, Any]],
+    *,
+    date_keys: list[str],
+    open_keys: list[str],
+    high_keys: list[str],
+    low_keys: list[str],
+    close_keys: list[str],
+    volume_keys: list[str],
+    source: str,
+    volume_source: str,
+) -> pd.DataFrame:
+    normalized = []
+    for row in rows:
+        date = first_row_value(row, date_keys)
+        close = numeric_or_none(first_row_value(row, close_keys))
+        if not date or close is None:
+            continue
+        volume = numeric_or_none(first_row_value(row, volume_keys)) or 0
+        normalized.append(
+            {
+                "date": date,
+                "Open": numeric_or_none(first_row_value(row, open_keys)) or close,
+                "High": numeric_or_none(first_row_value(row, high_keys)) or close,
+                "Low": numeric_or_none(first_row_value(row, low_keys)) or close,
+                "Close": close,
+                "Volume": volume,
+                "Value": close * volume,
+            }
+        )
+    if not normalized:
+        return pd.DataFrame()
+    df = pd.DataFrame(normalized)
+    df.index = pd.to_datetime(df.pop("date"), format="%Y%m%d", errors="coerce")
+    df = df.dropna(subset=["Close"]).sort_index().copy()
+    df["DataSource"] = source
+    df["DataStatus"] = "마감 기준"
+    df["SourceNote"] = "한국투자증권 Open API 기준"
+    df["VolumeSource"] = volume_source
+    return df
+
+
+def first_row_value(row: dict[str, Any], keys: list[str]) -> Any:
+    for key in keys:
+        value = row.get(key)
+        if value not in {None, ""}:
+            return value
+    return None
+
+
+def numeric_or_none(value: Any) -> float | None:
+    try:
+        if value is None or pd.isna(value):
+            return None
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
 
 
 def prepare_etf_history(history: pd.DataFrame) -> pd.DataFrame:
