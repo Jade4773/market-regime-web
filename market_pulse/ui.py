@@ -21,7 +21,7 @@ TAB_LABELS = {
     "products": "상품 추천",
 }
 
-APP_VERSION = "etf-full-screener-v4-liquidity-cache-3h"
+APP_VERSION = "etf-full-screener-v5-els-all-issuers"
 
 
 @st.cache_data(ttl=DEFAULT_CACHE_SECONDS, show_spinner=False)
