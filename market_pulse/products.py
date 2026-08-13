@@ -41,128 +41,66 @@ INDEX_KEYWORDS = [
 ]
 
 
+def etf_candidate(
+    *,
+    market_group: str,
+    signal_key: str,
+    listing: str,
+    ticker: str,
+    yahoo_ticker: str,
+    name: str,
+    country: str,
+    index: str,
+    note: str,
+    min_avg_volume: int,
+) -> dict[str, Any]:
+    return {
+        "market_group": market_group,
+        "signal_key": signal_key,
+        "listing": listing,
+        "ticker": ticker,
+        "yahoo_ticker": yahoo_ticker,
+        "name": name,
+        "country": country,
+        "index": index,
+        "note": note,
+        "min_avg_volume": min_avg_volume,
+    }
+
+
 ETF_CANDIDATES = [
-    {
-        "signal_key": "kospi200",
-        "listing": "국내상장 ETF",
-        "ticker": "069500",
-        "yahoo_ticker": "069500.KS",
-        "name": "KODEX 200",
-        "country": "대한민국",
-        "index": "KOSPI 200",
-        "note": "한국 대형주 대표지수 추종",
-        "min_avg_volume": 20000,
-    },
-    {
-        "signal_key": "kospi200",
-        "listing": "국내상장 ETF",
-        "ticker": "102110",
-        "yahoo_ticker": "102110.KS",
-        "name": "TIGER 200",
-        "country": "대한민국",
-        "index": "KOSPI 200",
-        "note": "한국 대형주 대표지수 추종",
-        "min_avg_volume": 20000,
-    },
-    {
-        "signal_key": "kospi",
-        "listing": "국내상장 ETF",
-        "ticker": "226490",
-        "yahoo_ticker": "226490.KS",
-        "name": "KODEX 코스피",
-        "country": "대한민국",
-        "index": "KOSPI",
-        "note": "코스피 시장 전체에 가까운 노출",
-        "min_avg_volume": 10000,
-    },
-    {
-        "signal_key": "sp500",
-        "listing": "국내상장 ETF",
-        "ticker": "360750",
-        "yahoo_ticker": "360750.KS",
-        "name": "TIGER 미국S&P500",
-        "country": "미국",
-        "index": "S&P 500",
-        "note": "국내 계좌로 미국 대형주 지수 노출",
-        "min_avg_volume": 20000,
-    },
-    {
-        "signal_key": "sp500",
-        "listing": "국내상장 ETF",
-        "ticker": "379800",
-        "yahoo_ticker": "379800.KS",
-        "name": "KODEX 미국S&P500TR",
-        "country": "미국",
-        "index": "S&P 500",
-        "note": "총수익 지수형 미국 대형주 노출",
-        "min_avg_volume": 20000,
-    },
-    {
-        "signal_key": "nasdaq_composite",
-        "listing": "국내상장 ETF",
-        "ticker": "133690",
-        "yahoo_ticker": "133690.KS",
-        "name": "TIGER 미국나스닥100",
-        "country": "미국",
-        "index": "NASDAQ 100",
-        "note": "나스닥종합의 성장주 흐름을 나스닥100으로 대체 관찰",
-        "min_avg_volume": 20000,
-    },
-    {
-        "signal_key": "nasdaq_composite",
-        "listing": "국내상장 ETF",
-        "ticker": "379810",
-        "yahoo_ticker": "379810.KS",
-        "name": "KODEX 미국나스닥100TR",
-        "country": "미국",
-        "index": "NASDAQ 100",
-        "note": "나스닥종합의 성장주 흐름을 나스닥100으로 대체 관찰",
-        "min_avg_volume": 20000,
-    },
-    {
-        "signal_key": "sp500",
-        "listing": "미국상장 ETF",
-        "ticker": "VOO",
-        "yahoo_ticker": "VOO",
-        "name": "Vanguard S&P 500 ETF",
-        "country": "미국",
-        "index": "S&P 500",
-        "note": "미국 대형주 대표지수 추종",
-        "min_avg_volume": 100000,
-    },
-    {
-        "signal_key": "sp500",
-        "listing": "미국상장 ETF",
-        "ticker": "SPY",
-        "yahoo_ticker": "SPY",
-        "name": "SPDR S&P 500 ETF Trust",
-        "country": "미국",
-        "index": "S&P 500",
-        "note": "거래량이 큰 미국 대형주 대표 ETF",
-        "min_avg_volume": 100000,
-    },
-    {
-        "signal_key": "nasdaq_composite",
-        "listing": "미국상장 ETF",
-        "ticker": "ONEQ",
-        "yahoo_ticker": "ONEQ",
-        "name": "Fidelity Nasdaq Composite Index ETF",
-        "country": "미국",
-        "index": "Nasdaq Composite",
-        "note": "나스닥종합 지수를 직접 추종하는 ETF",
-        "min_avg_volume": 20000,
-    },
-    {
-        "signal_key": "nasdaq_composite",
-        "listing": "미국상장 ETF",
-        "ticker": "QQQ",
-        "yahoo_ticker": "QQQ",
-        "name": "Invesco QQQ Trust",
-        "country": "미국",
-        "index": "NASDAQ 100",
-        "note": "나스닥 성장주 대표 ETF, 나스닥종합의 대체 관찰용",
-        "min_avg_volume": 100000,
-    },
+    etf_candidate(market_group="korea", signal_key="kospi200", listing="국내상장 ETF", ticker="069500", yahoo_ticker="069500.KS", name="KODEX 200", country="대한민국", index="KOSPI 200", note="한국 대형주 대표지수", min_avg_volume=20000),
+    etf_candidate(market_group="korea", signal_key="kospi200", listing="국내상장 ETF", ticker="102110", yahoo_ticker="102110.KS", name="TIGER 200", country="대한민국", index="KOSPI 200", note="한국 대형주 대표지수", min_avg_volume=20000),
+    etf_candidate(market_group="korea", signal_key="kospi", listing="국내상장 ETF", ticker="226490", yahoo_ticker="226490.KS", name="KODEX 코스피", country="대한민국", index="KOSPI", note="코스피 시장 전체 노출", min_avg_volume=10000),
+    etf_candidate(market_group="korea", signal_key="kospi200", listing="국내상장 ETF", ticker="091160", yahoo_ticker="091160.KS", name="KODEX 반도체", country="대한민국", index="KRX 반도체", note="국내 반도체 업종 주도 여부 확인", min_avg_volume=10000),
+    etf_candidate(market_group="korea", signal_key="kospi200", listing="국내상장 ETF", ticker="305720", yahoo_ticker="305720.KS", name="KODEX 2차전지산업", country="대한민국", index="2차전지 산업", note="국내 성장 테마 주도 여부 확인", min_avg_volume=10000),
+    etf_candidate(market_group="us", signal_key="sp500", listing="국내상장 ETF", ticker="360750", yahoo_ticker="360750.KS", name="TIGER 미국S&P500", country="미국", index="S&P 500", note="국내 계좌로 미국 대형주 지수 노출", min_avg_volume=20000),
+    etf_candidate(market_group="us", signal_key="sp500", listing="국내상장 ETF", ticker="379800", yahoo_ticker="379800.KS", name="KODEX 미국S&P500TR", country="미국", index="S&P 500", note="총수익 지수형 미국 대형주 노출", min_avg_volume=20000),
+    etf_candidate(market_group="us", signal_key="nasdaq_composite", listing="국내상장 ETF", ticker="133690", yahoo_ticker="133690.KS", name="TIGER 미국나스닥100", country="미국", index="NASDAQ 100", note="나스닥 성장주 대체 관찰", min_avg_volume=20000),
+    etf_candidate(market_group="us", signal_key="nasdaq_composite", listing="국내상장 ETF", ticker="379810", yahoo_ticker="379810.KS", name="KODEX 미국나스닥100TR", country="미국", index="NASDAQ 100", note="나스닥 성장주 대체 관찰", min_avg_volume=20000),
+    etf_candidate(market_group="us", signal_key="nasdaq_composite", listing="국내상장 ETF", ticker="381180", yahoo_ticker="381180.KS", name="TIGER 미국필라델피아반도체나스닥", country="미국", index="PHLX Semiconductor", note="미국 반도체 주도 업종", min_avg_volume=10000),
+    etf_candidate(market_group="us", signal_key="nasdaq_composite", listing="국내상장 ETF", ticker="390390", yahoo_ticker="390390.KS", name="KODEX 미국반도체MV", country="미국", index="US Semiconductor", note="미국 반도체 주도 업종", min_avg_volume=10000),
+    etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="SPY", yahoo_ticker="SPY", name="SPDR S&P 500 ETF Trust", country="미국", index="S&P 500", note="미국 대형주 대표지수", min_avg_volume=100000),
+    etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="VOO", yahoo_ticker="VOO", name="Vanguard S&P 500 ETF", country="미국", index="S&P 500", note="미국 대형주 대표지수", min_avg_volume=100000),
+    etf_candidate(market_group="us", signal_key="nasdaq_composite", listing="미국상장 ETF", ticker="QQQ", yahoo_ticker="QQQ", name="Invesco QQQ Trust", country="미국", index="NASDAQ 100", note="나스닥 대형 성장주", min_avg_volume=100000),
+    etf_candidate(market_group="us", signal_key="nasdaq_composite", listing="미국상장 ETF", ticker="ONEQ", yahoo_ticker="ONEQ", name="Fidelity Nasdaq Composite ETF", country="미국", index="Nasdaq Composite", note="나스닥종합 직접 추종", min_avg_volume=20000),
+    etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="IWM", yahoo_ticker="IWM", name="iShares Russell 2000 ETF", country="미국", index="Russell 2000", note="미국 중소형주 주도 여부 확인", min_avg_volume=100000),
+    etf_candidate(market_group="us", signal_key="nasdaq_composite", listing="미국상장 ETF", ticker="SMH", yahoo_ticker="SMH", name="VanEck Semiconductor ETF", country="미국", index="Semiconductors", note="반도체 주도 업종", min_avg_volume=100000),
+    etf_candidate(market_group="us", signal_key="nasdaq_composite", listing="미국상장 ETF", ticker="SOXX", yahoo_ticker="SOXX", name="iShares Semiconductor ETF", country="미국", index="Semiconductors", note="반도체 주도 업종", min_avg_volume=100000),
+    etf_candidate(market_group="us", signal_key="nasdaq_composite", listing="미국상장 ETF", ticker="IGV", yahoo_ticker="IGV", name="iShares Expanded Tech-Software ETF", country="미국", index="Software", note="소프트웨어 주도 업종", min_avg_volume=50000),
+    etf_candidate(market_group="us", signal_key="nasdaq_composite", listing="미국상장 ETF", ticker="VGT", yahoo_ticker="VGT", name="Vanguard Information Technology ETF", country="미국", index="Information Technology", note="미국 기술주 주도 업종", min_avg_volume=50000),
+    etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="XLK", yahoo_ticker="XLK", name="Technology Select Sector SPDR", country="미국", index="Technology", note="S&P 기술 섹터", min_avg_volume=100000),
+    etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="XLC", yahoo_ticker="XLC", name="Communication Services SPDR", country="미국", index="Communication Services", note="커뮤니케이션 섹터", min_avg_volume=100000),
+    etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="XLY", yahoo_ticker="XLY", name="Consumer Discretionary SPDR", country="미국", index="Consumer Discretionary", note="임의소비재 섹터", min_avg_volume=100000),
+    etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="XLF", yahoo_ticker="XLF", name="Financial Select Sector SPDR", country="미국", index="Financials", note="금융 섹터", min_avg_volume=100000),
+    etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="XLI", yahoo_ticker="XLI", name="Industrial Select Sector SPDR", country="미국", index="Industrials", note="산업재 섹터", min_avg_volume=100000),
+    etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="XLE", yahoo_ticker="XLE", name="Energy Select Sector SPDR", country="미국", index="Energy", note="에너지 섹터", min_avg_volume=100000),
+    etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="XLV", yahoo_ticker="XLV", name="Health Care Select Sector SPDR", country="미국", index="Health Care", note="헬스케어 섹터", min_avg_volume=100000),
+    etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="EWJ", yahoo_ticker="EWJ", name="iShares MSCI Japan ETF", country="일본", index="MSCI Japan", note="일본 주식시장 주도 여부 확인", min_avg_volume=100000),
+    etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="EWT", yahoo_ticker="EWT", name="iShares MSCI Taiwan ETF", country="대만", index="MSCI Taiwan", note="대만 반도체/기술주 노출", min_avg_volume=50000),
+    etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="INDA", yahoo_ticker="INDA", name="iShares MSCI India ETF", country="인도", index="MSCI India", note="인도 주식시장 주도 여부 확인", min_avg_volume=50000),
+    etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="EWY", yahoo_ticker="EWY", name="iShares MSCI South Korea ETF", country="대한민국", index="MSCI Korea", note="한국 시장의 미국상장 대체 ETF", min_avg_volume=50000),
+    etf_candidate(market_group="us", signal_key="sp500", listing="미국상장 ETF", ticker="EWW", yahoo_ticker="EWW", name="iShares MSCI Mexico ETF", country="멕시코", index="MSCI Mexico", note="멕시코 주식시장 주도 여부 확인", min_avg_volume=20000),
 ]
 
 
@@ -464,26 +402,119 @@ def dedupe_products(products: list[dict[str, str]]) -> list[dict[str, str]]:
 
 def build_etf_recommendations(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     items = snapshot.get("items", {})
-    candidates = []
+    market_gates = build_market_gates(items)
+    analyzed_candidates = []
 
     for candidate in ETF_CANDIDATES:
-        item = items.get(candidate["signal_key"])
-        if not item or item.get("error"):
+        market_item = market_gates.get(candidate["market_group"])
+        if not market_item:
+            continue
+        benchmark_item = items.get(candidate["signal_key"]) or market_item
+        if benchmark_item.get("error"):
             continue
 
-        oneil = item.get("signals", {}).get("oneil", {})
-        follow_through = item.get("follow_through")
-        if not qualifies_oneil_buy(item, oneil, follow_through):
-            continue
+        oneil = market_item.get("signals", {}).get("oneil", {})
+        follow_through = market_item.get("follow_through")
+        analyzed = analyze_etf_candidate(
+            candidate,
+            market_item,
+            oneil,
+            follow_through,
+            benchmark_item,
+        )
+        if analyzed:
+            analyzed_candidates.append(analyzed)
 
-        analyzed = analyze_etf_candidate(candidate, item, oneil, follow_through)
-        if analyzed and analyzed["can_slim_score"] >= 65:
-            candidates.append(analyzed)
+    ranked = rank_etf_candidates(analyzed_candidates)
+    leaders = [
+        item
+        for item in ranked
+        if item["leader_rank"] <= 12
+        and item["can_slim_score"] >= 68
+        and item["relative_strength_score"] >= 60
+        and item["action"] != "매도/방어"
+    ]
 
     return sorted(
-        candidates,
-        key=lambda item: (item["listing"], -item["can_slim_score"], item["ticker"]),
+        leaders,
+        key=lambda item: (
+            item["listing"],
+            item["leader_rank"],
+            -item["relative_strength_score"],
+            item["ticker"],
+        ),
     )
+
+
+def build_market_gates(items: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    gates = {}
+    korea = best_valid_market(items, ["kospi200", "kospi"])
+    united_states = best_valid_market(items, ["sp500", "nasdaq_composite"])
+    if korea:
+        gates["korea"] = korea
+    if united_states:
+        gates["us"] = united_states
+    return gates
+
+
+def best_valid_market(items: dict[str, Any], keys: list[str]) -> dict[str, Any] | None:
+    valid = []
+    for key in keys:
+        item = items.get(key)
+        if not item or item.get("error"):
+            continue
+        oneil = item.get("signals", {}).get("oneil", {})
+        follow_through = item.get("follow_through")
+        if qualifies_oneil_buy(item, oneil, follow_through):
+            valid.append(item)
+    if not valid:
+        return None
+    return sorted(
+        valid,
+        key=lambda item: (
+            -item.get("signals", {}).get("oneil", {}).get("score", 0),
+            item.get("distribution_count", 99),
+            item.get("name", ""),
+        ),
+    )[0]
+
+
+def rank_etf_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not candidates:
+        return []
+
+    scores = sorted(item["relative_strength_score"] for item in candidates)
+    total = len(scores)
+    for item in candidates:
+        weaker_or_equal = sum(1 for score in scores if score <= item["relative_strength_score"])
+        percentile = round(weaker_or_equal / total * 99)
+        item["leader_percentile"] = percentile
+        item["components"]["ETF 상대강도 순위"] = percentile
+
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            -item["leader_percentile"],
+            -item["can_slim_score"],
+            item["ticker"],
+        ),
+    )
+    for rank, item in enumerate(ranked, start=1):
+        item["leader_rank"] = rank
+        item["leader_label"] = leader_label(item)
+    return ranked[:18]
+
+
+def leader_label(item: dict[str, Any]) -> str:
+    if item["action"] == "매도/방어":
+        return "방어"
+    if item["leader_rank"] <= 5:
+        return "주도 ETF"
+    if item["leader_rank"] <= 8 and item["action"] in {"매수 후보", "관심/대기"}:
+        return "주도 후보"
+    if item["action"] == "추격 주의":
+        return "추격 주의"
+    return item["action"]
 
 
 def analyze_etf_candidate(
@@ -491,6 +522,7 @@ def analyze_etf_candidate(
     market_item: dict[str, Any],
     oneil: dict[str, Any],
     follow_through: dict[str, Any] | None,
+    benchmark_item: dict[str, Any],
 ) -> dict[str, Any] | None:
     try:
         df = prepare_etf_history(fetch_yahoo_chart(candidate["yahoo_ticker"]))
@@ -509,11 +541,12 @@ def analyze_etf_candidate(
     volume_change = pct(latest["Volume"], previous["Volume"])
     return63 = float(latest["return63"]) if pd.notna(latest["return63"]) else 0.0
     return126 = float(latest["return126"]) if pd.notna(latest["return126"]) else 0.0
+    return252 = float(latest["return252"]) if pd.notna(latest["return252"]) else 0.0
     distance_high252 = (
         float(latest["distance_high252"]) if pd.notna(latest["distance_high252"]) else None
     )
 
-    benchmark_metrics = market_item.get("signals", {}).get("trend", {}).get("metrics", {})
+    benchmark_metrics = benchmark_item.get("signals", {}).get("trend", {}).get("metrics", {})
     benchmark_return63 = numeric_or_zero(benchmark_metrics.get("3개월 수익률"))
     benchmark_return126 = numeric_or_zero(benchmark_metrics.get("6개월 수익률"))
 
@@ -530,6 +563,12 @@ def analyze_etf_candidate(
         avg_volume50=avg_volume50,
         min_avg_volume=float(candidate.get("min_avg_volume", 0)),
     )
+    raw_rs_score = relative_strength_score(
+        return63=return63,
+        return126=return126,
+        return252=return252,
+        distance_high252=distance_high252,
+    )
     score = sum(components.values())
     action = etf_action(score, close, pivot)
     sell_signal = current_sell_signal(market_item, close, ma50, pivot, latest, avg_volume50)
@@ -540,6 +579,7 @@ def analyze_etf_candidate(
     return {
         **candidate,
         "market": market_item["name"],
+        "benchmark_market": benchmark_item["name"],
         "opinion": oneil.get("opinion", "-"),
         "can_slim_score": score,
         "components": components,
@@ -548,8 +588,13 @@ def analyze_etf_candidate(
         "change_pct": float(latest["pct_change"]) if pd.notna(latest["pct_change"]) else 0.0,
         "return63": return63,
         "return126": return126,
+        "return252": return252,
         "rs_vs_market63": return63 - benchmark_return63,
         "rs_vs_market126": return126 - benchmark_return126,
+        "relative_strength_score": raw_rs_score,
+        "leader_percentile": 0,
+        "leader_rank": 999,
+        "leader_label": action,
         "ma50": ma50,
         "ma200": ma200,
         "pivot": pivot,
@@ -564,7 +609,7 @@ def analyze_etf_candidate(
         "basis": (
             f"{market_item['name']} {oneil.get('opinion', '-')}, {ftd_text}, "
             f"활성 분산일 {market_item.get('distribution_count', 0)}회, "
-            f"ETF CAN SLIM 점수 {score}점"
+            f"{benchmark_item['name']} 대비 ETF 상대강도 원점수 {raw_rs_score}점"
         ),
         "data_source": "Yahoo Finance ETF 가격",
         "data_status": market_item.get("data_status", "-"),
@@ -580,11 +625,36 @@ def prepare_etf_history(history: pd.DataFrame) -> pd.DataFrame:
     df["avg_volume50"] = df["Volume"].rolling(50).mean()
     df["return63"] = df["Close"].pct_change(63) * 100
     df["return126"] = df["Close"].pct_change(126) * 100
+    df["return252"] = df["Close"].pct_change(252) * 100
     df["high252"] = df["Close"].rolling(252).max()
     df["distance_high252"] = (df["Close"] / df["high252"] - 1) * 100
     # Recent 11-week closing high is a practical ETF proxy for an O'Neil-style pivot.
     df["pivot55"] = df["Close"].shift(1).rolling(55).max()
     return df
+
+
+def relative_strength_score(
+    *,
+    return63: float,
+    return126: float,
+    return252: float,
+    distance_high252: float | None,
+) -> int:
+    score = 0
+    if return63 > 0:
+        score += min(30, max(0, int(return63 * 1.2)))
+    if return126 > 0:
+        score += min(30, max(0, int(return126 * 0.8)))
+    if return252 > 0:
+        score += min(25, max(0, int(return252 * 0.35)))
+    if distance_high252 is not None:
+        if distance_high252 >= -5:
+            score += 15
+        elif distance_high252 >= -10:
+            score += 10
+        elif distance_high252 >= -15:
+            score += 5
+    return min(score, 100)
 
 
 def score_can_slim_etf(

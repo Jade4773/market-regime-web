@@ -793,15 +793,18 @@ def render_els_products_section() -> None:
 
 
 def render_etf_recommendation_section(snapshot: dict[str, Any]) -> None:
-    st.markdown('<div class="section-title">윌리엄 오닐식 ETF 후보</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">윌리엄 오닐식 주도 ETF 후보</div>', unsafe_allow_html=True)
     candidates = build_etf_recommendations(snapshot)
     if not candidates:
         st.info(
-            "현재 윌리엄 오닐 기준을 통과한 ETF 매수 후보가 없습니다. "
-            "유효한 팔로우쓰루데이와 낮은 분산일 부담이 함께 확인될 때 후보가 표시됩니다."
+            "현재 CAN SLIM식 주도 ETF 기준을 통과한 후보가 없습니다. "
+            "시장 FTD, 낮은 분산일 부담, ETF 상대강도 상위권, 매수 위치가 함께 확인될 때 후보가 표시됩니다."
         )
         return
 
+    st.caption(
+        "후보군 전체를 ETF별 상대강도 원점수로 랭킹한 뒤, 상위권 중 CAN SLIM 조건을 통과한 ETF만 표시합니다."
+    )
     for listing in ["국내상장 ETF", "미국상장 ETF"]:
         listing_candidates = [item for item in candidates if item["listing"] == listing]
         st.markdown(f"**{listing}**")
@@ -817,6 +820,7 @@ def render_etf_recommendation_section(snapshot: dict[str, Any]) -> None:
 
 
 def render_etf_candidate_card(candidate: dict[str, Any]) -> None:
+    label = candidate.get("leader_label", candidate["action"])
     st.markdown(
         f"""
         <div class="market-card">
@@ -825,7 +829,7 @@ def render_etf_candidate_card(candidate: dict[str, Any]) -> None:
               <h3>{candidate["ticker"]} · {candidate["name"]}</h3>
               <p>{candidate["listing"]} · 투자국가 {candidate["country"]}</p>
             </div>
-            <span class="regime-badge" style="{badge_style(candidate["action"])}">{candidate["action"]}</span>
+            <span class="regime-badge" style="{badge_style(label)}">{label}</span>
           </div>
           <div class="price-row">
             <strong>{format_number(candidate["last_price"])}</strong>
@@ -842,9 +846,9 @@ def render_etf_candidate_card(candidate: dict[str, Any]) -> None:
             <strong>{candidate["can_slim_score"]}</strong>
           </div>
           <div class="stat-grid">
-            <div><span>3개월 상대강도</span><strong>{format_pct(candidate["rs_vs_market63"])}</strong></div>
-            <div><span>6개월 상대강도</span><strong>{format_pct(candidate["rs_vs_market126"])}</strong></div>
-            <div><span>50일선</span><strong>{format_number(candidate["ma50"])}</strong></div>
+            <div><span>상대강도 순위</span><strong>{candidate["leader_rank"]}위/{candidate["leader_percentile"]}</strong></div>
+            <div><span>현재 타이밍</span><strong>{candidate["action"]}</strong></div>
+            <div><span>3개월 수익률</span><strong>{format_pct(candidate["return63"])}</strong></div>
           </div>
           <div class="ftd-line">
             <span>선정 근거</span><strong>{candidate["basis"]}</strong>
@@ -883,11 +887,13 @@ def render_product_guide() -> None:
             **2. ETF 매수 후보**
 
             - **M - Market Direction:** 해당 시장의 유효 팔로우쓰루데이가 유지되고, 활성 분산일이 4회 미만일 때만 후보를 계산합니다.
-            - **L - Leader/Relative Strength:** ETF의 3개월·6개월 수익률이 기준 지수보다 강한지 봅니다.
+            - **L - Leader/Relative Strength:** S&P 500, 나스닥100, 반도체, 소프트웨어, 섹터, 국가 ETF 후보군 전체를 비교해 상대강도 상위권만 남깁니다.
+            - **주도 ETF 판정:** 3개월·6개월·12개월 수익률과 52주 고점 근접도를 합산해 상대강도 원점수를 만들고, ETF 후보군 안에서 순위를 매깁니다.
             - **기술적 매수 위치:** ETF가 50일선·200일선 위에 있고, 최근 11주 고점 돌파 기준가부터 +5% 이내면 `매수 후보`로 봅니다.
             - **유동성:** 50일 평균 거래량이 최소 기준을 넘는지 봅니다.
             - **매도/방어:** 기준가 대비 -7~8% 손절, 거래량 동반 50일선 이탈, 시장 분산일 누적, 20~25% 이익보호 구간을 함께 표시합니다.
             - 한국상장 ETF와 미국상장 ETF를 나누고, 각 ETF가 투자하는 국가와 추종/관찰 지수를 함께 표시합니다.
+            - 광범위 대표지수 ETF보다 섹터·테마·국가 ETF의 상대강도가 높으면 그 ETF가 먼저 표시됩니다.
 
             이 탭의 `추천`은 개인 맞춤 투자권유가 아니라 **규칙을 통과한 관심 후보 표시**입니다.
             """

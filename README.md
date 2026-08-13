@@ -67,7 +67,9 @@ The `상품 추천` tab shows two rule-based candidate areas:
 - ETF candidates derived from William O'Neil / CAN SLIM-style rules. The market
   must have an active follow-through day with limited distribution pressure, and
   the ETF itself must pass trend, relative strength, buy-zone, liquidity, and
-  sell-rule checks. Candidates are split into Korea-listed ETFs and U.S.-listed
+  sell-rule checks. The app ranks a wider ETF universe across broad indexes,
+  sectors, themes, and country ETFs so leading ETFs can surface ahead of plain
+  index trackers. Candidates are split into Korea-listed ETFs and U.S.-listed
   ETFs, and include the investment country and tracked or proxy index.
 
 This tab is not personalized investment advice. It does not consider investor
