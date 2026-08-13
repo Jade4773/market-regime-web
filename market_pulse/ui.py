@@ -16,7 +16,7 @@ TAB_LABELS = {
     "products": "상품 추천",
 }
 
-APP_VERSION = "product-tab-v1"
+APP_VERSION = "leader-etf-v2"
 
 
 @st.cache_data(ttl=900, show_spinner=False)
