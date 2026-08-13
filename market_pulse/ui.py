@@ -57,7 +57,7 @@ def data_source_badge(item: dict[str, Any]) -> str:
 def badge_style(regime: str) -> str:
     if "매수" in regime:
         return "background:#e8f3ff;color:#1b64da;"
-    if "중립" in regime or "관망" in regime:
+    if "중립" in regime or "관망" in regime or "관심" in regime or "대기" in regime:
         return "background:#eef4fb;color:#4d6f9d;"
     if "주의" in regime:
         return "background:#fff0f0;color:#e5484d;"
@@ -67,7 +67,7 @@ def badge_style(regime: str) -> str:
 def regime_tone(regime: str) -> str:
     if "매수" in regime:
         return "positive"
-    if "중립" in regime or "관망" in regime:
+    if "중립" in regime or "관망" in regime or "관심" in regime or "대기" in regime:
         return "neutral"
     if "주의" in regime:
         return "caution"
@@ -768,6 +768,8 @@ def render_els_products_section() -> None:
         els = get_els_products()
 
     items = els.get("items", [])
+    if els.get("api_status"):
+        st.caption(f"API 우선 확인: {els['api_status']}")
     if items:
         st.caption(f"{els.get('status', '한국투자증권 기준')} · 청약 종료로 판독된 항목은 제외")
         st.dataframe(items, hide_index=True, use_container_width=True)
@@ -823,7 +825,11 @@ def render_etf_candidate_card(candidate: dict[str, Any]) -> None:
               <h3>{candidate["ticker"]} · {candidate["name"]}</h3>
               <p>{candidate["listing"]} · 투자국가 {candidate["country"]}</p>
             </div>
-            <span class="regime-badge" style="{badge_style('매수 우위')}">매수 후보</span>
+            <span class="regime-badge" style="{badge_style(candidate["action"])}">{candidate["action"]}</span>
+          </div>
+          <div class="price-row">
+            <strong>{format_number(candidate["last_price"])}</strong>
+            <span class="{'up' if candidate["change_pct"] >= 0 else 'down'}">{format_pct(candidate["change_pct"])}</span>
           </div>
           <p class="explain">
             추종/관찰 지수: {candidate["index"]}<br>
@@ -831,18 +837,34 @@ def render_etf_candidate_card(candidate: dict[str, Any]) -> None:
             {candidate["note"]}
           </p>
           <div class="signal-row">
-            <span>오닐 점수</span>
-            <div class="meter"><span style="width:{candidate["score"]}%"></span></div>
-            <strong>{candidate["score"]}</strong>
+            <span>CAN SLIM 점수</span>
+            <div class="meter"><span style="width:{candidate["can_slim_score"]}%"></span></div>
+            <strong>{candidate["can_slim_score"]}</strong>
+          </div>
+          <div class="stat-grid">
+            <div><span>3개월 상대강도</span><strong>{format_pct(candidate["rs_vs_market63"])}</strong></div>
+            <div><span>6개월 상대강도</span><strong>{format_pct(candidate["rs_vs_market126"])}</strong></div>
+            <div><span>50일선</span><strong>{format_number(candidate["ma50"])}</strong></div>
           </div>
           <div class="ftd-line">
             <span>선정 근거</span><strong>{candidate["basis"]}</strong>
+          </div>
+          <div class="ftd-line">
+            <span>매수 가능 구간</span>
+            <strong>{format_number(candidate["buy_low"])} ~ {format_number(candidate["buy_high"])} · 기준가 대비 +5% 이내</strong>
+          </div>
+          <div class="ftd-line">
+            <span>매도/방어 기준</span>
+            <strong>{candidate["sell_signal"]} · 손절 기준 {format_number(candidate["stop_loss"])} · 이익보호 {format_number(candidate["profit_low"])}~{format_number(candidate["profit_high"])}</strong>
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    st.caption(f"기준 데이터: {candidate['data_source']} · {candidate['data_status']}")
+    component_text = " · ".join(
+        f"{name} {score}점" for name, score in candidate["components"].items()
+    )
+    st.caption(f"{component_text} · 기준 데이터: {candidate['data_source']} · {candidate['data_status']}")
 
 
 def render_product_guide() -> None:
@@ -851,17 +873,21 @@ def render_product_guide() -> None:
             """
             **1. 한국투자증권 지수형 ELS**
 
-            - 한국투자증권 ELS/DLS 청약 화면에서 청약 가능 상품을 읽어옵니다.
+            - 먼저 한국투자증권 Open API로 ELS 청약 상품 조회가 설정되어 있는지 확인합니다.
+            - 현재 공개 Open API 카탈로그에는 ELS/DLS 청약 상품 조회 엔드포인트가 확인되지 않아, 별도 API 문서를 받으면 `KIS_ELS_PRODUCTS_PATH`, `KIS_ELS_PRODUCTS_TR_ID`로 연결할 수 있게 해두었습니다.
+            - API가 설정되지 않았거나 실패하면 한국투자증권 ELS/DLS 청약 화면에서 청약 가능 상품을 읽어옵니다.
             - 상품명 또는 기초자산에 `KOSPI`, `S&P`, `NASDAQ`, `EURO STOXX`, `NIKKEI`, `HSCEI` 같은 지수 키워드가 있는 ELS만 지수형으로 분류합니다.
             - 청약 종료일로 보이는 날짜가 현재 날짜보다 과거이면 목록에서 제외합니다.
             - 청약 화면이 로그인 세션을 요구하거나 페이지 구조가 바뀌면 자동 판독 대신 공식 청약 화면 바로가기를 보여줍니다.
 
             **2. ETF 매수 후보**
 
-            - 이 앱에서 이미 계산한 지수별 **윌리엄 오닐 탭 신호**를 사용합니다.
-            - 해당 지수의 오닐 의견이 `매수 우위`이고, 유효한 팔로우쓰루데이가 유지되며, 활성 분산일이 4회 미만일 때만 ETF 후보를 보여줍니다.
+            - **M - Market Direction:** 해당 시장의 유효 팔로우쓰루데이가 유지되고, 활성 분산일이 4회 미만일 때만 후보를 계산합니다.
+            - **L - Leader/Relative Strength:** ETF의 3개월·6개월 수익률이 기준 지수보다 강한지 봅니다.
+            - **기술적 매수 위치:** ETF가 50일선·200일선 위에 있고, 최근 11주 고점 돌파 기준가부터 +5% 이내면 `매수 후보`로 봅니다.
+            - **유동성:** 50일 평균 거래량이 최소 기준을 넘는지 봅니다.
+            - **매도/방어:** 기준가 대비 -7~8% 손절, 거래량 동반 50일선 이탈, 시장 분산일 누적, 20~25% 이익보호 구간을 함께 표시합니다.
             - 한국상장 ETF와 미국상장 ETF를 나누고, 각 ETF가 투자하는 국가와 추종/관찰 지수를 함께 표시합니다.
-            - 나스닥종합을 직접 추종하는 국내상장 ETF가 제한적이므로, 국내상장 상품은 나스닥100 ETF를 대체 관찰 후보로 표시합니다.
 
             이 탭의 `추천`은 개인 맞춤 투자권유가 아니라 **규칙을 통과한 관심 후보 표시**입니다.
             """

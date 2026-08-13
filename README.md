@@ -59,12 +59,16 @@ ETF volume proxies are used when the active source is Yahoo Finance:
 
 The `상품 추천` tab shows two rule-based candidate areas:
 
-- Korea Investment & Securities index-linked ELS candidates, when the public
-  subscription screen can be read. If the screen requires a login session or is
-  blocked, the app shows official ELS subscription links instead.
-- ETF candidates derived from the William O'Neil signal already calculated for
-  each index. Candidates are split into Korea-listed ETFs and U.S.-listed ETFs,
-  and include the investment country and tracked or proxy index.
+- Korea Investment & Securities index-linked ELS candidates. A separately
+  provided ELS Open API endpoint can be configured with
+  `KIS_ELS_PRODUCTS_PATH`, `KIS_ELS_PRODUCTS_TR_ID`, and optional
+  `KIS_ELS_PRODUCTS_PARAMS_JSON`. If that API is not configured or fails, the
+  app falls back to the public subscription screen and official ELS links.
+- ETF candidates derived from William O'Neil / CAN SLIM-style rules. The market
+  must have an active follow-through day with limited distribution pressure, and
+  the ETF itself must pass trend, relative strength, buy-zone, liquidity, and
+  sell-rule checks. Candidates are split into Korea-listed ETFs and U.S.-listed
+  ETFs, and include the investment country and tracked or proxy index.
 
 This tab is not personalized investment advice. It does not consider investor
 suitability, account type, tax, FX cost, fees, liquidity, or product risk grade.

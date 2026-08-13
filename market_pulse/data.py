@@ -4,6 +4,7 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -189,6 +190,8 @@ def kis_config_value(name: str, default: str | None = None) -> str | None:
 
     if not streamlit_context_available():
         return default
+    if not streamlit_secrets_may_exist():
+        return default
 
     try:
         import streamlit as st
@@ -202,6 +205,14 @@ def kis_config_value(name: str, default: str | None = None) -> str | None:
     except Exception:
         pass
     return default
+
+
+def streamlit_secrets_may_exist() -> bool:
+    candidate_paths = [
+        Path.home() / ".streamlit" / "secrets.toml",
+        Path.cwd() / ".streamlit" / "secrets.toml",
+    ]
+    return any(path.exists() for path in candidate_paths)
 
 
 def streamlit_context_available() -> bool:
