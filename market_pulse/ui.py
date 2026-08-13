@@ -21,7 +21,7 @@ TAB_LABELS = {
     "products": "상품 추천",
 }
 
-APP_VERSION = "etf-full-screener-v1"
+APP_VERSION = "etf-full-screener-v2"
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -826,6 +826,7 @@ def render_els_products_section() -> None:
 
 def render_etf_recommendation_section(snapshot: dict[str, Any]) -> None:
     st.markdown('<div class="section-title">CAN SLIM ETF TOP 2</div>', unsafe_allow_html=True)
+    st.caption(f"ETF screener version: {APP_VERSION}")
     render_etf_market_status(snapshot)
     candidates = build_etf_recommendations(snapshot)
     if not candidates:

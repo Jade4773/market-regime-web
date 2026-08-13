@@ -45,6 +45,7 @@ INDEX_KEYWORDS = [
 ]
 
 KIS_MASTER_BASE_URL = "https://new.real.download.dws.co.kr/common/master"
+ETF_SCREENER_VERSION = "kis-universe-v2"
 ETF_SCREEN_CACHE_SECONDS = int(os.getenv("ETF_SCREEN_CACHE_SECONDS", "3600"))
 ETF_PRELIMINARY_LIMIT = int(os.getenv("ETF_PRELIMINARY_LIMIT", "180"))
 ETF_FULL_ANALYSIS_LIMIT = int(os.getenv("ETF_FULL_ANALYSIS_LIMIT", "40"))
@@ -840,7 +841,7 @@ def build_etf_recommendations(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
 
 def etf_recommendation_cache_key(snapshot: dict[str, Any]) -> str:
     items = snapshot.get("items", {})
-    parts = []
+    parts = [ETF_SCREENER_VERSION]
     for key in sorted(items):
         item = items[key]
         parts.append(
