@@ -45,13 +45,14 @@ INDEX_KEYWORDS = [
 ]
 
 KIS_MASTER_BASE_URL = "https://new.real.download.dws.co.kr/common/master"
-ETF_SCREENER_VERSION = "kis-universe-v2"
+ETF_SCREENER_VERSION = "kis-universe-v3"
 ETF_SCREEN_CACHE_SECONDS = int(os.getenv("ETF_SCREEN_CACHE_SECONDS", "3600"))
 ETF_PRELIMINARY_LIMIT = int(os.getenv("ETF_PRELIMINARY_LIMIT", "180"))
 ETF_FULL_ANALYSIS_LIMIT = int(os.getenv("ETF_FULL_ANALYSIS_LIMIT", "40"))
 ETF_SPARK_BATCH_SIZE = int(os.getenv("ETF_SPARK_BATCH_SIZE", "80"))
 ETF_SCREEN_MAX_UNIVERSE = int(os.getenv("ETF_SCREEN_MAX_UNIVERSE", "1000"))
 ETF_DOMESTIC_MIN_PREV_VOLUME = int(os.getenv("ETF_DOMESTIC_MIN_PREV_VOLUME", "1000"))
+ETF_MIN_HISTORY_ROWS = 220
 
 _ETF_RECOMMENDATION_CACHE: dict[str, Any] = {}
 _ETF_UNIVERSE_CACHE: dict[str, Any] = {}
@@ -1187,11 +1188,11 @@ def analyze_etf_candidate(
     benchmark_item: dict[str, Any],
 ) -> dict[str, Any] | None:
     try:
-        history, history_source = fetch_etf_history(candidate)
+        history, history_source = fetch_sufficient_etf_history(candidate)
         df = prepare_etf_history(history)
     except Exception:
         return None
-    if len(df) < 220:
+    if len(df) < ETF_MIN_HISTORY_ROWS:
         return None
 
     market_item = market_gate["item"]
@@ -1275,6 +1276,21 @@ def analyze_etf_candidate(
         "data_source": history_source,
         "data_status": market_item.get("data_status", "-"),
     }
+
+
+def fetch_sufficient_etf_history(candidate: dict[str, Any]) -> tuple[pd.DataFrame, str]:
+    history, history_source = fetch_etf_history(candidate)
+    if len(history) >= ETF_MIN_HISTORY_ROWS or history_source.startswith("Yahoo"):
+        return history, history_source
+
+    try:
+        fallback = fetch_yahoo_chart(candidate["yahoo_ticker"])
+    except Exception:
+        return history, history_source
+
+    if len(fallback) > len(history):
+        return fallback, "Yahoo Finance ETF 가격"
+    return history, history_source
 
 
 def fetch_etf_history(candidate: dict[str, Any]) -> tuple[pd.DataFrame, str]:

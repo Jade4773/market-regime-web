@@ -21,7 +21,7 @@ TAB_LABELS = {
     "products": "상품 추천",
 }
 
-APP_VERSION = "etf-full-screener-v2"
+APP_VERSION = "etf-full-screener-v3"
 
 
 @st.cache_data(ttl=900, show_spinner=False)
