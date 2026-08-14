@@ -68,8 +68,51 @@ ETF_DOMESTIC_MIN_PREV_VOLUME = int(os.getenv("ETF_DOMESTIC_MIN_PREV_VOLUME", "10
 ETF_DOMESTIC_MIN_AVG_VALUE = int(os.getenv("ETF_DOMESTIC_MIN_AVG_VALUE", "1000000000"))
 ETF_US_MIN_AVG_VALUE = int(os.getenv("ETF_US_MIN_AVG_VALUE", "5000000"))
 ETF_MIN_HISTORY_ROWS = 220
+ETF_VOLUME_THRESHOLD = float(os.getenv("ETF_VOLUME_THRESHOLD", "1.4"))
+ETF_BUY_ZONE_MAX_PCT = float(os.getenv("ETF_BUY_ZONE_MAX_PCT", "5"))
+ETF_BUY_READY_LIMIT = int(os.getenv("ETF_BUY_READY_LIMIT", "5"))
+ETF_WATCHLIST_LIMIT = int(os.getenv("ETF_WATCHLIST_LIMIT", "2"))
 ELS_TOP_LIMIT = int(os.getenv("ELS_TOP_LIMIT", "5"))
 ELS_MAX_PER_ISSUER = int(os.getenv("ELS_MAX_PER_ISSUER", "2"))
+
+ETF_STATUS_PRIORITY = {
+    "DATA_INCOMPLETE": 0,
+    "MARKET_NOT_CONFIRMED": 1,
+    "LIQUIDITY_FAIL": 2,
+    "BELOW_50SMA": 3,
+    "NO_VALID_BASE": 4,
+    "NO_VALID_PIVOT": 5,
+    "EXTENDED": 6,
+    "PIVOT_APPROACH": 7,
+    "VOLUME_CONFIRM": 8,
+    "BUY_READY": 9,
+}
+
+ETF_ACTION_LABELS = {
+    "BUY_READY": "현재 매수 가능",
+    "VOLUME_CONFIRM": "거래량 확인 대기",
+    "PIVOT_APPROACH": "피봇 접근 관찰",
+    "NO_VALID_BASE": "베이스 형성 관찰",
+    "NO_VALID_PIVOT": "피봇 재산출 대기",
+    "EXTENDED": "추격 매수 금지",
+    "BELOW_50SMA": "회복 대기",
+    "MARKET_NOT_CONFIRMED": "신규 매수 보류",
+    "LIQUIDITY_FAIL": "유동성 기준 미달",
+    "DATA_INCOMPLETE": "데이터 부족",
+}
+
+ETF_REASON_LABELS = {
+    "DATA_INCOMPLETE": "가격·거래량 또는 피봇 계산 데이터가 부족합니다.",
+    "MARKET_NOT_CONFIRMED": "기준 시장이 확정 상승장 상태가 아닙니다.",
+    "LIQUIDITY_FAIL": "50일 평균 거래량 또는 거래대금이 최소 기준에 미달합니다.",
+    "BELOW_50SMA": "현재 가격이 50일선 위에 있고 50일선이 상승해야 하는 필터를 통과하지 못했습니다.",
+    "NO_VALID_BASE": "유효 베이스가 아직 확인되지 않았습니다.",
+    "NO_VALID_PIVOT": "신뢰할 피봇 가격을 산출하지 못했습니다.",
+    "ABOVE_BUY_ZONE": "피봇 대비 +5% 매수구간을 넘어 추격 매수 구간입니다.",
+    "BELOW_PIVOT": "아직 피봇을 돌파하지 않았습니다.",
+    "FAR_FROM_PIVOT": "피봇까지 5% 넘게 남아 있어 아직 진입 시점이 아닙니다.",
+    "VOLUME_NOT_CONFIRMED": f"돌파 거래량이 {ETF_VOLUME_THRESHOLD:.1f}배 기준에 미달합니다.",
+}
 
 _ETF_RECOMMENDATION_CACHE: dict[str, Any] = {}
 _ETF_UNIVERSE_CACHE: dict[str, Any] = {}
@@ -1514,12 +1557,12 @@ def summarize_els_issuers(products: list[dict[str, str]]) -> str:
     return f"{shown} 외 {len(summary) - 8}개사"
 
 
-def build_etf_recommendations(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+def build_etf_recommendations(snapshot: dict[str, Any]) -> dict[str, Any]:
     cache_key = etf_recommendation_cache_key(snapshot)
     cached = _ETF_RECOMMENDATION_CACHE.get(cache_key)
     now = time.time()
     if cached and now - cached["created_at"] < ETF_SCREEN_CACHE_SECONDS:
-        return cached["items"]
+        return cached["result"]
 
     items = snapshot.get("items", {})
     market_gates = build_market_gates(items)
@@ -1547,37 +1590,79 @@ def build_etf_recommendations(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
             analyzed_candidates.append(analyzed)
 
     ranked = rank_etf_candidates(analyzed_candidates)
-    leaders = [
+    screen_summary = {
+        "universe_count": len(universe),
+        "screenable_count": screenable_count,
+        "preliminary_count": len(preliminary_candidates),
+        "analyzed_count": len(analyzed_candidates),
+        "universe_source": "한국투자증권 종목정보파일",
+        "price_source": first_price_source(ranked),
+        "volume_threshold": ETF_VOLUME_THRESHOLD,
+        "buy_zone_max_pct": ETF_BUY_ZONE_MAX_PCT,
+    }
+
+    buy_now = sorted(
+        [item for item in ranked if item["trading_status"] == "BUY_READY"],
+        key=lambda item: (
+            -item["setup_score"],
+            -item["leadership_score"],
+            item["leader_rank"],
+            item["ticker"],
+        ),
+    )[:ETF_BUY_READY_LIMIT]
+
+    watchable = [
         item
         for item in ranked
-        if item["leader_rank"] <= 12
+        if item["display_group"] == "WATCHLIST"
+        and item["leader_rank"] <= 20
         and item["can_slim_score"] >= 60
         and item["leader_percentile"] >= 65
-        and item["components"]["유동성"] > 0
-        and item["trading_status"] not in {"SELL", "BROKEN"}
+        and item["trading_status"] != "BUY_READY"
     ]
-
-    selected = sorted(
-        leaders,
+    watchlist = sorted(
+        watchable,
         key=lambda item: (
-            item["action_rank"],
+            watch_priority(item),
             -item["can_slim_score"],
             item["leader_rank"],
             item["ticker"],
         ),
-    )[:2]
-    for display_rank, item in enumerate(selected, start=1):
+    )[:ETF_WATCHLIST_LIMIT]
+
+    for display_rank, item in enumerate(buy_now, start=1):
         item["display_rank"] = display_rank
-        item["screen_summary"] = {
-            "universe_count": len(universe),
-            "screenable_count": screenable_count,
-            "preliminary_count": len(preliminary_candidates),
-            "analyzed_count": len(analyzed_candidates),
-            "universe_source": "한국투자증권 종목정보파일",
-            "price_source": item.get("data_source", "-"),
-        }
-    _ETF_RECOMMENDATION_CACHE[cache_key] = {"created_at": now, "items": selected}
-    return selected
+    for display_rank, item in enumerate(watchlist, start=1):
+        item["display_rank"] = display_rank
+
+    result = {
+        "buy_now": buy_now,
+        "watchlist": watchlist,
+        "ranked": ranked,
+        "screen_summary": screen_summary,
+    }
+    _ETF_RECOMMENDATION_CACHE[cache_key] = {"created_at": now, "result": result}
+    return result
+
+
+def first_price_source(items: list[dict[str, Any]]) -> str:
+    for item in items:
+        source = item.get("data_source")
+        if source:
+            return source
+    return "-"
+
+
+def watch_priority(item: dict[str, Any]) -> int:
+    status_priority = {
+        "VOLUME_CONFIRM": 1,
+        "PIVOT_APPROACH": 2,
+        "NO_VALID_BASE": 3,
+        "NO_VALID_PIVOT": 4,
+        "EXTENDED": 5,
+        "MARKET_NOT_CONFIRMED": 6,
+    }
+    return status_priority.get(item.get("trading_status"), 9)
 
 
 def etf_recommendation_cache_key(snapshot: dict[str, Any]) -> str:
@@ -1857,9 +1942,9 @@ def rank_etf_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]
 
 def assign_relative_strength_components(candidates: list[dict[str, Any]]) -> None:
     for period_key, score_key, max_points in [
-        ("return20", "20일 상대강도", 10),
-        ("return60", "60일 상대강도", 12),
-        ("return120", "120일 상대강도", 8),
+        ("return20", "20일 상대강도", 15),
+        ("return60", "60일 상대강도", 20),
+        ("return120", "120일 상대강도", 10),
     ]:
         values = sorted(item[period_key] for item in candidates)
         total = len(values)
@@ -1889,30 +1974,36 @@ def finalize_etf_candidate(item: dict[str, Any]) -> None:
         + item["return60_percentile"] * 0.40
         + item["return120_percentile"] * 0.25
     )
-    item["components"]["L 상대강도"] = rs_score
-    item["components"]["추세"] = trend_score(item)
-    item["components"]["베이스/피봇"] = base_pivot_score(item)
-    item["components"]["유동성"] = liquidity_score(item)
-    item["can_slim_score"] = (
-        item["components"]["M 시장 방향"]
-        + item["components"]["L 상대강도"]
-        + item["components"]["추세"]
-        + item["components"]["베이스/피봇"]
-        + item["components"]["유동성"]
+    item["components"]["추세 정렬"] = leadership_trend_score(item)
+    item["components"]["신고가/리더"] = leadership_high_score(item)
+    item["components"]["Leadership 원점수"] = (
+        rs_score + item["components"]["추세 정렬"] + item["components"]["신고가/리더"]
     )
-    trading_status, action, action_rank = etf_trading_status(item)
-    item["trading_status"] = trading_status
-    item["action"] = action
-    item["action_rank"] = action_rank
+    item["leadership_score"] = round(item["components"]["Leadership 원점수"] / 60 * 100)
+
+    setup_components = setup_score_components(item)
+    item["components"].update(setup_components)
+    item["components"]["Setup 원점수"] = sum(setup_components.values())
+    item["setup_score"] = round(item["components"]["Setup 원점수"] / 40 * 100)
+
+    classification = classify_etf_candidate(item)
+    item.update(classification)
+    if item["trading_status"] == "NO_VALID_BASE":
+        item["setup_score"] = min(item["setup_score"], 45)
+    elif item["trading_status"] == "EXTENDED":
+        item["setup_score"] = min(item["setup_score"], 55)
+    item["can_slim_score"] = round(item["leadership_score"] * 0.60 + item["setup_score"] * 0.40)
+    item["action"] = item["action_label"]
+    item["action_rank"] = 10 - ETF_STATUS_PRIORITY.get(item["trading_status"], 0)
     item["sell_signal"] = current_sell_signal(item)
     item["positive_reasons"], item["risk_signals"] = etf_reasons(item)
 
 
 def leader_label(item: dict[str, Any]) -> str:
-    if item["trading_status"] in {"SELL", "BROKEN"}:
+    if item["trading_status"] in {"BELOW_50SMA", "LIQUIDITY_FAIL", "DATA_INCOMPLETE"}:
         return "방어"
     if item["trading_status"] == "BUY_READY":
-        return "매수준비"
+        return "현재 매수 가능"
     if item["trading_status"] == "PIVOT_APPROACH":
         return "피봇 접근"
     if item["leader_rank"] <= 5 and item["leader_percentile"] >= 75:
@@ -1973,7 +2064,7 @@ def analyze_etf_candidate(
         "market_state_label": market_gate["state_label"],
         "opinion": market_item.get("signals", {}).get("oneil", {}).get("opinion", "-"),
         "can_slim_score": 0,
-        "components": {"M 시장 방향": market_gate["score"]},
+        "components": {},
         "action": "관찰",
         "trading_status": "WATCH",
         "action_rank": 9,
@@ -2008,6 +2099,7 @@ def analyze_etf_candidate(
         "avg_volume20": avg_volume20,
         "avg_volume50": avg_volume50,
         "avg_value50": avg_value50,
+        "distance_high252": distance_high252,
         "min_avg_value": min_avg_value_for_etf(candidate),
         "volume_change_pct": volume_change,
         "sell_signal": "관찰",
@@ -2261,48 +2353,109 @@ def volatility_is_contracting(df: pd.DataFrame) -> bool:
     return bool(recent <= previous * 1.15)
 
 
-def trend_score(item: dict[str, Any]) -> int:
+def leadership_trend_score(item: dict[str, Any]) -> int:
     score = 0
     if item["ma21"] and item["last_price"] > item["ma21"]:
-        score += 6
-    if item["ma50"] and item["last_price"] > item["ma50"]:
-        score += 7
-    if item["ma50_slope"] > 0:
-        score += 4
-    if item["ma200"] and item["last_price"] > item["ma200"]:
         score += 3
-    return score
+    if item["ma50"] and item["last_price"] > item["ma50"]:
+        score += 3
+    if item["ma50_slope"] > 0:
+        score += 2
+    if item["ma200"] and item["last_price"] > item["ma200"]:
+        score += 2
+    return min(score, 10)
 
 
-def base_pivot_score(item: dict[str, Any]) -> int:
+def leadership_high_score(item: dict[str, Any]) -> int:
+    distance = item.get("distance_high252")
+    if distance is None:
+        return 2
+    if distance >= -5:
+        return 5
+    if distance >= -10:
+        return 4
+    if distance >= -15:
+        return 3
+    return 1
+
+
+def setup_score_components(item: dict[str, Any]) -> dict[str, int]:
+    return {
+        "유효 베이스": setup_base_score(item),
+        "피벗 품질": setup_pivot_quality_score(item),
+        "피벗 거리": setup_pivot_distance_score(item),
+        "거래량 확인": setup_volume_score(item),
+        "리스크 구조": setup_risk_score(item),
+    }
+
+
+def setup_base_score(item: dict[str, Any]) -> int:
     score = 0
     if item["base_exists"]:
         score += 5
     if item["base_days"] >= 25:
-        score += 4
+        score += 3
     if item["base_depth_pct"] is not None and item["base_depth_pct"] <= 15:
         score += 4
-    if item["pivot_distance_pct"] is not None and item["pivot_distance_pct"] >= -5:
-        score += 4
-    if item["breakout"]:
-        score += 4
-    if item["breakout"] and item["volume_ratio"] >= 1.4:
-        score += 4
-    return score
+    return min(score, 12)
 
 
-def liquidity_score(item: dict[str, Any]) -> int:
+def setup_pivot_quality_score(item: dict[str, Any]) -> int:
+    score = 0
+    if item["pivot"]:
+        score += 3
+    if item["base_exists"]:
+        score += 3
+    if item["base_depth_pct"] is not None and item["base_depth_pct"] <= 12:
+        score += 2
+    return min(score, 8)
+
+
+def setup_pivot_distance_score(item: dict[str, Any]) -> int:
+    distance = item["pivot_distance_pct"]
+    if distance is None:
+        return 0
+    if 0 <= distance <= ETF_BUY_ZONE_MAX_PCT:
+        return 8
+    if -ETF_BUY_ZONE_MAX_PCT <= distance < 0:
+        return 6
+    if ETF_BUY_ZONE_MAX_PCT < distance <= 10:
+        return 3
+    if -10 <= distance < -ETF_BUY_ZONE_MAX_PCT:
+        return 3
+    return 1
+
+
+def setup_volume_score(item: dict[str, Any]) -> int:
+    if item["breakout"] and item["volume_ratio"] >= ETF_VOLUME_THRESHOLD:
+        return 8
+    score = 0
+    if item["breakout"] and item["volume_ratio"] >= 1.0:
+        score += 4
+    elif item["volume_ratio"] >= 1.0:
+        score += 2
+    if liquidity_passes(item):
+        score += 4
+    return min(score, 8)
+
+
+def setup_risk_score(item: dict[str, Any]) -> int:
+    score = 4
+    if item["ma50"] and item["last_price"] < item["ma50"]:
+        score -= 3
+    if item["pivot_distance_pct"] is not None and item["pivot_distance_pct"] > ETF_BUY_ZONE_MAX_PCT:
+        score -= 2
+    if item["base_depth_pct"] is not None and item["base_depth_pct"] > 20:
+        score -= 1
+    return max(0, score)
+
+
+def liquidity_passes(item: dict[str, Any]) -> bool:
     min_volume = float(item.get("min_avg_volume", 0))
     min_value = float(item.get("min_avg_value", 0))
     if min_volume <= 0 or min_value <= 0:
-        return 0
-    volume_ok = item["avg_volume50"] >= min_volume
-    value_ok = item["avg_value50"] >= min_value
-    if item["avg_volume50"] >= min_volume * 3 and item["avg_value50"] >= min_value * 3:
-        return 5
-    if volume_ok and value_ok:
-        return 3
-    return 0
+        return False
+    return item["avg_volume50"] >= min_volume and item["avg_value50"] >= min_value
 
 
 def min_avg_value_for_etf(candidate: dict[str, Any]) -> int:
@@ -2311,36 +2464,64 @@ def min_avg_value_for_etf(candidate: dict[str, Any]) -> int:
     return ETF_US_MIN_AVG_VALUE
 
 
-def etf_trading_status(item: dict[str, Any]) -> tuple[str, str, int]:
+def classify_etf_candidate(item: dict[str, Any]) -> dict[str, Any]:
+    reasons = []
     close = item["last_price"]
     pivot = item["pivot"]
     ma50 = item["ma50"]
-    ma21 = item["ma21"]
     pivot_distance = item["pivot_distance_pct"]
-    market_state_value = item["market_state"]
-    heavy_volume = item["volume_ratio"] >= 1.2
 
-    if market_state_value == "MARKET_CORRECTION":
-        return "MARKET_WAIT", "관망", 8
-    if ma50 and close < ma50:
-        return "BROKEN", "매수금지", 7
-    if not item["base_exists"] or not pivot:
-        return "NO_VALID_BASE", "관찰", 6
-    if pivot_distance is not None and pivot_distance < -5:
-        return "FAR_FROM_PIVOT", "피봇 대기", 5
-    if pivot_distance is not None and -5 <= pivot_distance < 0:
-        return "PIVOT_APPROACH", "피봇 접근", 2
-    if pivot_distance is not None and 0 <= pivot_distance <= 5:
-        if item["volume_ratio"] >= 1.4 and market_state_value == "CONFIRMED_UPTREND":
-            return "BUY_READY", "매수준비", 1
-        return "BREAKOUT_NEEDS_VOLUME", "거래량 확인", 3
-    if pivot_distance is not None and pivot_distance > 5:
-        if ma21 and close > ma21:
-            return "HOLD", "보유/추격금지", 4
-        if heavy_volume:
-            return "SELL_WARNING", "매도주의", 4
-        return "EXTENDED", "추격금지", 5
-    return "WATCH", "관찰", 6
+    if any(value is None for value in [close, ma50]) or pivot_distance is None:
+        reasons.append("DATA_INCOMPLETE")
+    if item["market_state"] != "CONFIRMED_UPTREND":
+        reasons.append("MARKET_NOT_CONFIRMED")
+    if not liquidity_passes(item):
+        reasons.append("LIQUIDITY_FAIL")
+    if not (ma50 and close > ma50 and item["ma50_slope"] > 0):
+        reasons.append("BELOW_50SMA")
+    if not item["base_exists"]:
+        reasons.append("NO_VALID_BASE")
+    if not pivot:
+        reasons.append("NO_VALID_PIVOT")
+
+    if reasons:
+        status = highest_priority_status(reasons)
+        return etf_classification_result(status, False, reasons)
+
+    if pivot_distance > ETF_BUY_ZONE_MAX_PCT:
+        return etf_classification_result("EXTENDED", False, ["ABOVE_BUY_ZONE"])
+    if pivot_distance < 0:
+        pending = ["BELOW_PIVOT"]
+        if pivot_distance < -ETF_BUY_ZONE_MAX_PCT:
+            pending.append("FAR_FROM_PIVOT")
+        return etf_classification_result("PIVOT_APPROACH", False, pending)
+    if item["volume_ratio"] < ETF_VOLUME_THRESHOLD:
+        return etf_classification_result("VOLUME_CONFIRM", False, ["VOLUME_NOT_CONFIRMED"])
+    return etf_classification_result("BUY_READY", True, [])
+
+
+def highest_priority_status(reasons: list[str]) -> str:
+    return sorted(
+        reasons,
+        key=lambda reason: ETF_STATUS_PRIORITY.get(reason, 99),
+    )[0]
+
+
+def etf_classification_result(
+    status: str,
+    eligible: bool,
+    reasons: list[str],
+) -> dict[str, Any]:
+    excluded_statuses = {"DATA_INCOMPLETE", "LIQUIDITY_FAIL", "BELOW_50SMA"}
+    display_group = "BUY_NOW" if status == "BUY_READY" else "EXCLUDED" if status in excluded_statuses else "WATCHLIST"
+    return {
+        "eligible": eligible,
+        "ineligibility_reasons": reasons,
+        "ineligibility_reason_labels": [ETF_REASON_LABELS.get(reason, reason) for reason in reasons],
+        "trading_status": status,
+        "display_group": display_group,
+        "action_label": ETF_ACTION_LABELS.get(status, "관찰"),
+    }
 
 
 def current_sell_signal(item: dict[str, Any]) -> str:
@@ -2372,6 +2553,10 @@ def etf_reasons(item: dict[str, Any]) -> tuple[list[str], list[str]]:
         risks.append("시장 상승장은 유지되지만 분산일 부담이 있습니다.")
     else:
         risks.append("시장 조정장으로 신규 매수는 보류합니다.")
+
+    for reason in item.get("ineligibility_reason_labels", []):
+        if reason not in risks:
+            risks.append(reason)
 
     positives.append(f"후보군 내 상대강도 백분위 {item['leader_percentile']}입니다.")
     if item["last_price"] > (item["ma21"] or float("inf")) and item["last_price"] > (item["ma50"] or float("inf")):
