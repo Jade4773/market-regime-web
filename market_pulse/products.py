@@ -72,6 +72,8 @@ ETF_VOLUME_THRESHOLD = float(os.getenv("ETF_VOLUME_THRESHOLD", "1.4"))
 ETF_BUY_ZONE_MAX_PCT = float(os.getenv("ETF_BUY_ZONE_MAX_PCT", "5"))
 ETF_BUY_READY_LIMIT = int(os.getenv("ETF_BUY_READY_LIMIT", "5"))
 ETF_WATCHLIST_LIMIT = int(os.getenv("ETF_WATCHLIST_LIMIT", "2"))
+ETF_HOLDING_LOOKBACK_SESSIONS = int(os.getenv("ETF_HOLDING_LOOKBACK_SESSIONS", "40"))
+ETF_HOLDING_DISPLAY_LIMIT = int(os.getenv("ETF_HOLDING_DISPLAY_LIMIT", "12"))
 ELS_TOP_LIMIT = int(os.getenv("ELS_TOP_LIMIT", "5"))
 ELS_MAX_PER_ISSUER = int(os.getenv("ELS_MAX_PER_ISSUER", "2"))
 
@@ -1599,6 +1601,7 @@ def build_etf_recommendations(snapshot: dict[str, Any]) -> dict[str, Any]:
         "price_source": first_price_source(ranked),
         "volume_threshold": ETF_VOLUME_THRESHOLD,
         "buy_zone_max_pct": ETF_BUY_ZONE_MAX_PCT,
+        "holding_lookback_sessions": ETF_HOLDING_LOOKBACK_SESSIONS,
     }
 
     buy_now = sorted(
@@ -1638,6 +1641,7 @@ def build_etf_recommendations(snapshot: dict[str, Any]) -> dict[str, Any]:
     result = {
         "buy_now": buy_now,
         "watchlist": watchlist,
+        "holding_reviews": build_etf_holding_reviews(ranked),
         "ranked": ranked,
         "screen_summary": screen_summary,
     }
@@ -1663,6 +1667,36 @@ def watch_priority(item: dict[str, Any]) -> int:
         "MARKET_NOT_CONFIRMED": 6,
     }
     return status_priority.get(item.get("trading_status"), 9)
+
+
+def build_etf_holding_reviews(ranked: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    reviews = [
+        item["holding_review"]
+        for item in ranked
+        if item.get("holding_review")
+    ]
+    return sorted(
+        reviews,
+        key=lambda review: (
+            holding_action_priority(review["holding_status"]),
+            -review["age_sessions"],
+            -review["return_pct"],
+            review["ticker"],
+        ),
+    )[:ETF_HOLDING_DISPLAY_LIMIT]
+
+
+def holding_action_priority(status: str) -> int:
+    priorities = {
+        "SELL_CUT_LOSS": 0,
+        "SELL_DEFENSE": 1,
+        "DEFENSE": 2,
+        "PROFIT_PROTECT": 3,
+        "TAKE_PARTIAL": 4,
+        "EIGHT_WEEK_HOLD": 5,
+        "HOLD": 6,
+    }
+    return priorities.get(status, 9)
 
 
 def etf_recommendation_cache_key(snapshot: dict[str, Any]) -> str:
@@ -1998,6 +2032,7 @@ def finalize_etf_candidate(item: dict[str, Any]) -> None:
     item["action"] = item["action_label"]
     item["action_rank"] = 10 - ETF_STATUS_PRIORITY.get(item["trading_status"], 0)
     item["sell_signal"] = current_sell_signal(item)
+    item["holding_review"] = build_holding_review(item, item.get("recent_buy_ready_event"))
     item["positive_reasons"], item["risk_signals"] = etf_reasons(item)
 
 
@@ -2057,6 +2092,7 @@ def analyze_etf_candidate(
     follow_through = market_item.get("follow_through")
     ftd_text = f"{follow_through['date']} FTD" if follow_through else "FTD 확인 필요"
     buy_high = pivot * 1.05 if pivot else None
+    recent_buy_ready_event = find_recent_buy_ready_event(df, candidate, market_item)
     return {
         **candidate,
         "category": candidate.get("category") or infer_etf_category(candidate),
@@ -2105,6 +2141,8 @@ def analyze_etf_candidate(
         "min_avg_value": min_avg_value_for_etf(candidate),
         "volume_change_pct": volume_change,
         "sell_signal": "관찰",
+        "recent_buy_ready_event": recent_buy_ready_event,
+        "holding_review": None,
         "basis": (
             f"{market_item['name']} {market_gate['state_label']}, {ftd_text}, "
             f"활성 분산일 {market_item.get('distribution_count', 0)}회, "
@@ -2113,6 +2151,189 @@ def analyze_etf_candidate(
         "data_source": history_source,
         "data_status": market_item.get("data_status", "-"),
     }
+
+
+def find_recent_buy_ready_event(
+    df: pd.DataFrame,
+    candidate: dict[str, Any],
+    market_item: dict[str, Any],
+) -> dict[str, Any] | None:
+    start = max(0, len(df) - ETF_HOLDING_LOOKBACK_SESSIONS)
+    buy_ready_events = []
+    for pos in range(start, len(df)):
+        partial = df.iloc[: pos + 1]
+        if len(partial) < ETF_MIN_HISTORY_ROWS:
+            continue
+        event_item = historical_etf_signal_item(partial, candidate, market_item)
+        if not event_item:
+            continue
+        classification = classify_etf_candidate(event_item)
+        if classification["trading_status"] != "BUY_READY":
+            continue
+        row = partial.iloc[-1]
+        buy_ready_events.append(
+            {
+                "position": pos,
+                "date": row.name.strftime("%Y-%m-%d"),
+                "entry_price": event_item["last_price"],
+                "pivot": event_item["pivot"],
+                "buy_high": event_item["pivot"] * (1 + ETF_BUY_ZONE_MAX_PCT / 100),
+                "stop_loss": event_item["last_price"] * 0.92,
+                "volume_ratio": event_item["volume_ratio"],
+            }
+        )
+
+    if not buy_ready_events:
+        return None
+
+    streak = [buy_ready_events[-1]]
+    for event in reversed(buy_ready_events[:-1]):
+        if event["position"] == streak[0]["position"] - 1:
+            streak.insert(0, event)
+        else:
+            break
+
+    event = dict(streak[0])
+    last_event = streak[-1]
+    event["last_signal_date"] = last_event["date"]
+    event["signal_count"] = len(streak)
+    event["sessions_ago"] = len(df) - event["position"] - 1
+    event["quick_20pct"] = quick_twenty_percent_move(df, event["position"], event["pivot"])
+    hold_until_pos = min(len(df) - 1, event["position"] + ETF_HOLDING_LOOKBACK_SESSIONS)
+    event["hold_until_date"] = df.iloc[hold_until_pos].name.strftime("%Y-%m-%d")
+    return event
+
+
+def historical_etf_signal_item(
+    partial: pd.DataFrame,
+    candidate: dict[str, Any],
+    market_item: dict[str, Any],
+) -> dict[str, Any] | None:
+    latest = partial.iloc[-1]
+    close = float(latest["Close"])
+    ma50 = float(latest["ma50"]) if pd.notna(latest["ma50"]) else None
+    ma50_slope = float(latest["ma50_slope20"]) if pd.notna(latest["ma50_slope20"]) else 0.0
+    avg_volume20 = float(latest["avg_volume20"]) if pd.notna(latest["avg_volume20"]) else 0.0
+    avg_volume50 = float(latest["avg_volume50"]) if pd.notna(latest["avg_volume50"]) else 0.0
+    avg_value50 = float(latest["avg_value50"]) if pd.notna(latest["avg_value50"]) else 0.0
+    base = detect_flat_base(partial)
+    pivot = base.get("pivot")
+    if pivot is None:
+        return None
+    return {
+        "last_price": close,
+        "pivot": pivot,
+        "pivot_distance_pct": pct(close, pivot),
+        "ma50": ma50,
+        "ma50_slope": ma50_slope,
+        "market_state": market_state_for_buy_ready_date(market_item, latest.name),
+        "avg_volume50": avg_volume50,
+        "avg_value50": avg_value50,
+        "min_avg_volume": candidate.get("min_avg_volume", 0),
+        "min_avg_value": min_avg_value_for_etf(candidate),
+        "base_exists": base["base_exists"],
+        "volume_ratio": float(latest["Volume"] / avg_volume20) if avg_volume20 else 0.0,
+    }
+
+
+def market_state_for_buy_ready_date(market_item: dict[str, Any], date: Any) -> str:
+    follow_through = market_item.get("follow_through") or {}
+    if not follow_through.get("is_active"):
+        return "MARKET_CORRECTION"
+    ftd_date = pd.to_datetime(follow_through.get("date"), errors="coerce")
+    signal_date = pd.to_datetime(date, errors="coerce")
+    if pd.isna(ftd_date) or pd.isna(signal_date) or signal_date < ftd_date:
+        return "MARKET_CORRECTION"
+    return "CONFIRMED_UPTREND"
+
+
+def quick_twenty_percent_move(df: pd.DataFrame, start_pos: int, pivot: float | None) -> bool:
+    if not pivot:
+        return False
+    end_pos = min(len(df), start_pos + 16)
+    if end_pos <= start_pos:
+        return False
+    max_close = float(df.iloc[start_pos:end_pos]["Close"].max())
+    return max_close >= pivot * 1.20
+
+
+def build_holding_review(
+    item: dict[str, Any],
+    event: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not event:
+        return None
+    entry_price = event["entry_price"]
+    close = item["last_price"]
+    pivot = event["pivot"]
+    return_pct = pct(close, entry_price)
+    pivot_gain_pct = pct(close, pivot)
+    status, action_label, explanation = classify_holding_action(item, event)
+    return {
+        "ticker": item["ticker"],
+        "name": item["name"],
+        "listing": item["listing"],
+        "country": item["country"],
+        "index": item["index"],
+        "market": item["market"],
+        "data_source": item.get("data_source", "-"),
+        "data_status": item.get("data_status", "-"),
+        "signal_date": event["date"],
+        "last_signal_date": event.get("last_signal_date", event["date"]),
+        "signal_count": event.get("signal_count", 1),
+        "age_sessions": event["sessions_ago"],
+        "entry_price": entry_price,
+        "last_price": close,
+        "return_pct": return_pct,
+        "pivot": pivot,
+        "pivot_gain_pct": pivot_gain_pct,
+        "stop_loss": event["stop_loss"],
+        "profit_low": pivot * 1.20 if pivot else None,
+        "profit_high": pivot * 1.25 if pivot else None,
+        "ma21": item.get("ma21"),
+        "ma50": item.get("ma50"),
+        "volume_ratio": item.get("volume_ratio", 0.0),
+        "market_state": item.get("market_state", "-"),
+        "market_state_label": item.get("market_state_label", "-"),
+        "holding_status": status,
+        "action_label": action_label,
+        "explanation": explanation,
+        "sell_signal": item.get("sell_signal", "-"),
+        "quick_20pct": event.get("quick_20pct", False),
+        "hold_until_date": event.get("hold_until_date", "-"),
+        "can_slim_score": item.get("can_slim_score", 0),
+        "leader_rank": item.get("leader_rank", 999),
+    }
+
+
+def classify_holding_action(
+    item: dict[str, Any],
+    event: dict[str, Any],
+) -> tuple[str, str, str]:
+    close = item["last_price"]
+    entry_price = event["entry_price"]
+    pivot = event["pivot"]
+    ma21 = item.get("ma21")
+    ma50 = item.get("ma50")
+    volume_ratio = item.get("volume_ratio", 0.0)
+    return_pct = pct(close, entry_price)
+    pivot_gain_pct = pct(close, pivot)
+
+    if close <= event["stop_loss"] or return_pct <= -8:
+        return "SELL_CUT_LOSS", "매도/손절", "BUY_READY 가정 매수가 대비 -8% 손절 기준을 이탈했습니다."
+    if item.get("market_state") == "MARKET_CORRECTION":
+        return "DEFENSE", "방어 강화", "기준 시장이 조정장이라 ETF 보유 비중 축소를 우선 검토합니다."
+    if ma50 and close < ma50 and volume_ratio >= 1.0:
+        return "SELL_DEFENSE", "매도/방어", "거래량을 동반해 50일선을 이탈해 보유 리스크가 커졌습니다."
+    if event.get("quick_20pct") and event.get("sessions_ago", 0) < ETF_HOLDING_LOOKBACK_SESSIONS:
+        return "EIGHT_WEEK_HOLD", "8주 보유 우선", "20% 이상 빠른 상승 조건이 있어 명확한 매도 신호 전까지 8주 보유 예외를 우선 적용합니다."
+    if pivot_gain_pct >= 25:
+        return "PROFIT_PROTECT", "이익 보호", "피벗 대비 +25%를 넘어 이익 보호와 분할 환매를 검토할 구간입니다."
+    if pivot_gain_pct >= 20:
+        return "TAKE_PARTIAL", "일부 이익실현", "피벗 대비 +20~25% 이익실현 구간에 진입했습니다."
+    if ma21 and close < ma21 and volume_ratio >= 1.2:
+        return "DEFENSE", "일부 방어", "21EMA를 거래량 증가와 함께 이탈해 일부 환매 또는 방어를 검토합니다."
+    return "HOLD", "보유 유지", "손절선, 이익실현 구간, 주요 이동평균 이탈 신호가 아직 확인되지 않았습니다."
 
 
 def fetch_sufficient_etf_history(candidate: dict[str, Any]) -> tuple[pd.DataFrame, str]:

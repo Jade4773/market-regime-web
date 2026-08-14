@@ -572,8 +572,15 @@ def score_distribution_risk(
 
 
 def build_consensus(signals: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    opinions = [signal["opinion"] for signal in signals.values()]
-    average = round(sum(signal["score"] for signal in signals.values()) / len(signals))
+    consensus_signals = [
+        signals[key]
+        for key in ["oneil", "trend"]
+        if key in signals
+    ]
+    if not consensus_signals:
+        consensus_signals = list(signals.values())
+    opinions = [signal["opinion"] for signal in consensus_signals]
+    average = round(sum(signal["score"] for signal in consensus_signals) / len(consensus_signals))
     buy_count = opinions.count("매수 우위")
     sell_count = opinions.count("매도/방어")
 

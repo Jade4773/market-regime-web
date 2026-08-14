@@ -3,6 +3,7 @@ import unittest
 from market_pulse.products import (
     ETF_BUY_ZONE_MAX_PCT,
     ETF_VOLUME_THRESHOLD,
+    build_holding_review,
     classify_etf_candidate,
 )
 
@@ -24,6 +25,46 @@ def base_item(**overrides):
     }
     item.update(overrides)
     return item
+
+
+def holding_item(**overrides):
+    item = {
+        "ticker": "TEST",
+        "name": "Test ETF",
+        "listing": "미국상장 ETF",
+        "country": "미국",
+        "index": "Test Index",
+        "market": "미국 시장",
+        "data_source": "Test",
+        "data_status": "마감 기준",
+        "last_price": 110.0,
+        "ma21": 105.0,
+        "ma50": 100.0,
+        "volume_ratio": 0.9,
+        "market_state": "CONFIRMED_UPTREND",
+        "market_state_label": "상승장 확인",
+        "sell_signal": "특별한 매도 신호 없음",
+        "can_slim_score": 80,
+        "leader_rank": 1,
+    }
+    item.update(overrides)
+    return item
+
+
+def buy_ready_event(**overrides):
+    event = {
+        "date": "2026-07-01",
+        "last_signal_date": "2026-07-01",
+        "signal_count": 1,
+        "sessions_ago": 20,
+        "entry_price": 100.0,
+        "pivot": 100.0,
+        "stop_loss": 92.0,
+        "quick_20pct": False,
+        "hold_until_date": "2026-08-26",
+    }
+    event.update(overrides)
+    return event
 
 
 class EtfClassificationTest(unittest.TestCase):
@@ -82,6 +123,30 @@ class EtfClassificationTest(unittest.TestCase):
         result = classify_etf_candidate(base_item(pivot=None, pivot_distance_pct=None))
         self.assertEqual(result["trading_status"], "DATA_INCOMPLETE")
         self.assertFalse(result["eligible"])
+
+    def test_holding_review_cuts_loss_at_eight_percent(self):
+        review = build_holding_review(
+            holding_item(last_price=91.5),
+            buy_ready_event(),
+        )
+
+        self.assertEqual(review["action_label"], "매도/손절")
+
+    def test_holding_review_flags_profit_zone(self):
+        review = build_holding_review(
+            holding_item(last_price=121.0),
+            buy_ready_event(),
+        )
+
+        self.assertEqual(review["action_label"], "일부 이익실현")
+
+    def test_holding_review_applies_eight_week_exception(self):
+        review = build_holding_review(
+            holding_item(last_price=121.0),
+            buy_ready_event(quick_20pct=True),
+        )
+
+        self.assertEqual(review["action_label"], "8주 보유 우선")
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ TAB_LABELS = {
     "overview": "개요",
     "oneil": "FTD/분산일 확인",
     "trend": "추세/모멘텀",
-    "risk": "리스크 점검",
+    "risk": "보유/매도",
     "products": "상품 추천",
 }
 
@@ -274,11 +274,10 @@ def render_consensus_card(item: dict[str, Any]) -> None:
 
 
 def render_signal_jump_buttons(signals: dict[str, Any], key_prefix: str) -> None:
-    st.caption("관점별 상태를 누르면 해당 탭으로 이동합니다.")
+    st.caption("시장 관점별 상태를 누르면 해당 탭으로 이동합니다.")
     for signal_key, label in [
         ("oneil", "FTD/분산일 확인"),
         ("trend", "추세/모멘텀"),
-        ("risk", "리스크 점검"),
     ]:
         display_value = signal_jump_display_value(signal_key, signals[signal_key])
         if st.button(
@@ -750,7 +749,7 @@ def render_market_dashboard() -> None:
     elif active_tab == "trend":
         render_signal_tab(items, "trend", "추세/모멘텀")
     elif active_tab == "risk":
-        render_signal_tab(items, "risk", "리스크 점검")
+        render_holding_sell_tab(snapshot)
     elif active_tab == "products":
         render_products_tab(snapshot)
 
@@ -836,22 +835,22 @@ def render_overview_guide() -> None:
     with st.expander("종합 의견은 이렇게 정해집니다", expanded=False):
         st.markdown(
             """
-            **개요 탭은 세 가지 관점의 의견을 합산해 최종 의견을 냅니다.**
+            **개요 탭은 두 가지 시장 관점의 의견을 합산해 최종 의견을 냅니다.**
 
             - **FTD/분산일 확인:** 팔로우쓰루데이, 분산일, 스톨링, 랠리 실패 여부를 봅니다.
             - **추세/모멘텀:** 21EMA·50SMA·200SMA, 상대강도, Base/Pivot, Buy Zone, Volume Ratio를 봅니다.
-            - **리스크 점검:** RSI, 50일선 이격도, 분산일 누적과 집중 여부를 봅니다.
 
-            각 관점은 0~100점으로 계산되고, 지수별 **종합 점수**는 세 관점 점수의 평균입니다.
+            각 관점은 0~100점으로 계산되고, 지수별 **종합 점수**는 두 관점 점수의 평균입니다.
+            **보유/매도** 탭은 지수 종합판단에 섞지 않고, 상품추천 이후 ETF 사후관리용으로 따로 봅니다.
             """
         )
         st.markdown(
             """
             **지수별 최종 의견**
 
-            - **매수 우위:** 세 관점 중 2개 이상이 매수 우위이고, 종합 점수가 65점 이상일 때
+            - **매수 우위:** 두 시장 관점이 모두 매수 우위이고, 종합 점수가 65점 이상일 때
             - **중립/관망:** 매수와 방어 의견이 엇갈리거나, 종합 점수가 애매한 중간 구간일 때
-            - **매도/방어:** 세 관점 중 2개 이상이 매도/방어이거나, 종합 점수가 45점 미만일 때
+            - **매도/방어:** 두 시장 관점이 모두 매도/방어이거나, 종합 점수가 45점 미만일 때
             """
         )
         st.markdown(
@@ -976,6 +975,138 @@ def render_signal_tab(items: list[dict[str, Any]], signal_key: str, title: str) 
     else:
         with st.expander("리스크 점검 판정 기준", expanded=False):
             render_risk_scoring_guide()
+
+
+def render_holding_sell_tab(snapshot: dict[str, Any]) -> None:
+    st.markdown(
+        """
+        <div class="summary-card">
+          <div class="summary-label">ETF 사후관리</div>
+          <div class="summary-title neutral">보유/매도 점검</div>
+          <p class="summary-copy">
+            최근 8주 안에 상품추천에서 BUY_READY 조건이 확인됐던 ETF를 현재가 기준으로 다시 점검합니다.
+          </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.info(
+        "실제 매수가를 입력받지 않으므로 BUY_READY 최초 발생일의 종가를 가정 매수가로 사용합니다. "
+        "실제 보유 가격과 다르면 손절선과 수익률은 참고용으로만 보세요."
+    )
+    with st.spinner("최근 BUY_READY ETF의 보유/매도 상태를 계산하는 중입니다."):
+        recommendations = build_etf_recommendations(snapshot)
+    reviews = recommendations.get("holding_reviews", [])
+    summary = recommendations.get("screen_summary", {})
+    st.caption(
+        f"검토 범위: 상품추천 상세 재계산 대상 {summary.get('analyzed_count', '-')}개 · "
+        f"최근 {summary.get('holding_lookback_sessions', '40')}거래일 · "
+        f"가격 기준: {summary.get('price_source', '-')}"
+    )
+    if not reviews:
+        st.info(
+            "최근 8주 안에 BUY_READY 조건을 복원할 수 있는 ETF가 없습니다. "
+            "새 BUY_READY가 나오면 이 탭에 보유/매도 점검 카드가 표시됩니다."
+        )
+        render_holding_sell_guide()
+        return
+
+    status_counts: dict[str, int] = {}
+    for review in reviews:
+        status_counts[review["action_label"]] = status_counts.get(review["action_label"], 0) + 1
+    st.caption("현재 판정: " + " · ".join(f"{label} {count}개" for label, count in status_counts.items()))
+    for row_start in range(0, len(reviews), 2):
+        cols = st.columns(2)
+        for col, review in zip(cols, reviews[row_start : row_start + 2]):
+            with col:
+                render_holding_review_card(review)
+    render_holding_sell_guide()
+
+
+def render_holding_review_card(review: dict[str, Any]) -> None:
+    action_label = review["action_label"]
+    st.markdown(
+        f"""
+        <div class="market-card">
+          <div class="card-head">
+            <div>
+              <h3>{review["ticker"]} · {review["name"]}</h3>
+              <p>{review["listing"]} · 투자국가 {review["country"]} · {review["index"]}</p>
+            </div>
+            <span class="regime-badge" style="{holding_badge_style(review["holding_status"], action_label)}">{action_label}</span>
+          </div>
+          <div class="price-row">
+            <strong>{format_number(review["last_price"])}</strong>
+            <span class="{'up' if review["return_pct"] >= 0 else 'down'}">{format_pct(review["return_pct"])}</span>
+          </div>
+          <p class="explain">{review["explanation"]}</p>
+          <div class="signal-row">
+            <span>CAN SLIM Score</span>
+            <div class="meter"><span style="width:{review["can_slim_score"]}%"></span></div>
+            <strong>{review["can_slim_score"]}</strong>
+          </div>
+          <div class="stat-grid">
+            <div><span>BUY_READY</span><strong>{review["signal_date"]}</strong></div>
+            <div><span>경과</span><strong>{review["age_sessions"]}거래일</strong></div>
+            <div><span>연속 신호</span><strong>{review["signal_count"]}회</strong></div>
+          </div>
+          <div class="ftd-line">
+            <span>가정 매수가 / 손절선</span>
+            <strong>{format_number(review["entry_price"])} / {format_number(review["stop_loss"])}</strong>
+          </div>
+          <div class="ftd-line">
+            <span>Pivot / +20~25% 구간</span>
+            <strong>{format_number(review["pivot"])} / {format_number(review["profit_low"])} ~ {format_number(review["profit_high"])}</strong>
+          </div>
+          <div class="ftd-line">
+            <span>21EMA / 50SMA / Volume Ratio</span>
+            <strong>{format_number(review["ma21"])} / {format_number(review["ma50"])} / {format_ratio(review["volume_ratio"])}</strong>
+          </div>
+          <div class="ftd-line">
+            <span>시장 상태 / 현재 매도 신호</span>
+            <strong>{review["market_state_label"]} · {review["sell_signal"]}</strong>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if review.get("quick_20pct"):
+        st.caption(f"8주 보유 예외 검토: 빠른 +20% 조건 확인 · 최소 점검일 {review.get('hold_until_date', '-')}")
+    st.caption(f"데이터: {review.get('data_source', '-')} · {review.get('data_status', '-')}")
+
+
+def holding_badge_style(status: str, label: str) -> str:
+    if status in {"SELL_CUT_LOSS", "SELL_DEFENSE", "DEFENSE"}:
+        return badge_style("매도/방어")
+    if status in {"TAKE_PARTIAL", "PROFIT_PROTECT"}:
+        return badge_style("주의")
+    return badge_style("매수 우위" if "보유" in label else label)
+
+
+def render_holding_sell_guide() -> None:
+    with st.expander("보유/매도 판정 방식", expanded=False):
+        st.markdown(
+            """
+            **검토 대상**
+
+            - 상품추천 ETF 스크리너의 상세 재계산 대상 중 최근 40거래일, 약 8주 안에 `BUY_READY` 조건이 나온 ETF만 표시합니다.
+            - 과거 추천 기록 DB가 따로 있는 것은 아니므로, 현재 확보한 ETF 일봉으로 과거 신호를 다시 계산합니다.
+            - 실제 매수가를 모르기 때문에 `BUY_READY` 최초 발생일의 종가를 가정 매수가로 사용합니다.
+
+            **판정 기준**
+
+            - **매도/손절:** 가정 매수가 대비 -8% 손절선 이탈
+            - **매도/방어:** 거래량을 동반한 50일선 이탈
+            - **방어 강화:** 기준 시장이 조정장으로 바뀌었거나 21EMA를 거래량 증가와 함께 이탈
+            - **일부 이익실현:** 피벗 대비 +20~25% 구간 진입
+            - **이익 보호:** 피벗 대비 +25% 초과
+            - **8주 보유 우선:** BUY_READY 이후 3주 안에 +20% 이상 급등한 경우, 명확한 매도 신호 전까지 8주 보유 예외를 우선 적용
+            - **보유 유지:** 위 매도·방어·이익실현 조건이 아직 확인되지 않은 상태
+
+            이 탭은 새 ETF를 고르는 화면이 아니라, 이미 `BUY_READY`가 떴던 ETF를 산 것으로 가정했을 때
+            지금 **보유할지, 줄일지, 팔지**를 점검하는 화면입니다.
+            """
+        )
 
 
 def render_products_tab(snapshot: dict[str, Any]) -> None:
