@@ -21,7 +21,7 @@ TAB_LABELS = {
     "products": "상품 추천",
 }
 
-APP_VERSION = "trend-oneil-v3"
+APP_VERSION = "holding-sell-v1"
 ELS_CACHE_VERSION = "els-score-top5-v1"
 
 
