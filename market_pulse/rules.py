@@ -66,7 +66,7 @@ def analyze_index(meta: dict[str, str], history: pd.DataFrame) -> dict[str, Any]
     trend_signal = analyze_trend_signal(df)
     risk_signal = analyze_risk_signal(df, active_count, distribution_clustered)
     oneil_signal = {
-        "name": "윌리엄 오닐",
+        "name": "FTD, 분산일 모니터링",
         "opinion": regime,
         "score": score,
         "explanation": explanation,
