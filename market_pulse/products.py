@@ -70,6 +70,7 @@ ETF_US_MIN_AVG_VALUE = int(os.getenv("ETF_US_MIN_AVG_VALUE", "5000000"))
 ETF_MIN_HISTORY_ROWS = 220
 ETF_VOLUME_THRESHOLD = float(os.getenv("ETF_VOLUME_THRESHOLD", "1.4"))
 ETF_BUY_ZONE_MAX_PCT = float(os.getenv("ETF_BUY_ZONE_MAX_PCT", "5"))
+ETF_STOP_LOSS_PCT = float(os.getenv("ETF_STOP_LOSS_PCT", "6"))
 ETF_BUY_READY_LIMIT = int(os.getenv("ETF_BUY_READY_LIMIT", "5"))
 ETF_WATCHLIST_LIMIT = int(os.getenv("ETF_WATCHLIST_LIMIT", "2"))
 ETF_HOLDING_LOOKBACK_SESSIONS = int(os.getenv("ETF_HOLDING_LOOKBACK_SESSIONS", "40"))
@@ -2125,7 +2126,7 @@ def analyze_etf_candidate(
         "pivot_distance_pct": pivot_distance_pct,
         "buy_low": pivot,
         "buy_high": buy_high,
-        "stop_loss": pivot * 0.92 if pivot else None,
+        "stop_loss": pivot * (1 - ETF_STOP_LOSS_PCT / 100) if pivot else None,
         "profit_low": pivot * 1.20 if pivot else None,
         "profit_high": pivot * 1.25 if pivot else None,
         "base_exists": base["base_exists"],
@@ -2178,7 +2179,7 @@ def find_recent_buy_ready_event(
                 "entry_price": event_item["last_price"],
                 "pivot": event_item["pivot"],
                 "buy_high": event_item["pivot"] * (1 + ETF_BUY_ZONE_MAX_PCT / 100),
-                "stop_loss": event_item["last_price"] * 0.92,
+                "stop_loss": event_item["last_price"] * (1 - ETF_STOP_LOSS_PCT / 100),
                 "volume_ratio": event_item["volume_ratio"],
             }
         )
@@ -2319,8 +2320,12 @@ def classify_holding_action(
     return_pct = pct(close, entry_price)
     pivot_gain_pct = pct(close, pivot)
 
-    if close <= event["stop_loss"] or return_pct <= -8:
-        return "SELL_CUT_LOSS", "매도/손절", "BUY_READY 가정 매수가 대비 -8% 손절 기준을 이탈했습니다."
+    if close <= event["stop_loss"] or return_pct <= -ETF_STOP_LOSS_PCT:
+        return (
+            "SELL_CUT_LOSS",
+            "매도/손절",
+            f"BUY_READY 가정 매수가 대비 -{ETF_STOP_LOSS_PCT:g}% 손절 기준을 이탈했습니다.",
+        )
     if item.get("market_state") == "MARKET_CORRECTION":
         return "DEFENSE", "방어 강화", "기준 시장이 조정장이라 ETF 보유 비중 축소를 우선 검토합니다."
     if ma50 and close < ma50 and volume_ratio >= 1.0:
@@ -2754,8 +2759,8 @@ def current_sell_signal(item: dict[str, Any]) -> str:
     ma50 = item["ma50"]
     if item["market_state"] == "MARKET_CORRECTION":
         return "시장 조정장: 신규 매수 보류"
-    if pivot and close <= pivot * 0.92:
-        return "피봇 대비 -8% 손절선 이탈"
+    if pivot and close <= pivot * (1 - ETF_STOP_LOSS_PCT / 100):
+        return f"피봇 대비 -{ETF_STOP_LOSS_PCT:g}% 손절선 이탈"
     if ma50 and close < ma50 and item["volume_ratio"] >= 1.0:
         return "거래량 동반 50일선 이탈"
     if ma21 and close < ma21 and item["volume_ratio"] >= 1.2:

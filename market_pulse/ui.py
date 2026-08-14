@@ -7,6 +7,7 @@ import streamlit as st
 
 from market_pulse.data import DEFAULT_CACHE_SECONDS, get_market_snapshot
 from market_pulse.products import (
+    ETF_STOP_LOSS_PCT,
     build_etf_market_summary,
     build_etf_recommendations,
     fetch_public_els_products,
@@ -1086,7 +1087,7 @@ def holding_badge_style(status: str, label: str) -> str:
 def render_holding_sell_guide() -> None:
     with st.expander("보유/매도 판정 방식", expanded=False):
         st.markdown(
-            """
+            f"""
             **검토 대상**
 
             - 상품추천 ETF 스크리너의 상세 재계산 대상 중 최근 40거래일, 약 8주 안에 `BUY_READY` 조건이 나온 ETF만 표시합니다.
@@ -1095,7 +1096,7 @@ def render_holding_sell_guide() -> None:
 
             **판정 기준**
 
-            - **매도/손절:** 가정 매수가 대비 -8% 손절선 이탈
+            - **매도/손절:** 가정 매수가 대비 -{ETF_STOP_LOSS_PCT:g}% 손절선 이탈
             - **매도/방어:** 거래량을 동반한 50일선 이탈
             - **방어 강화:** 기준 시장이 조정장으로 바뀌었거나 21EMA를 거래량 증가와 함께 이탈
             - **일부 이익실현:** 피벗 대비 +20~25% 구간 진입

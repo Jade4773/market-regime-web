@@ -2,6 +2,7 @@ import unittest
 
 from market_pulse.products import (
     ETF_BUY_ZONE_MAX_PCT,
+    ETF_STOP_LOSS_PCT,
     ETF_VOLUME_THRESHOLD,
     build_holding_review,
     classify_etf_candidate,
@@ -59,7 +60,7 @@ def buy_ready_event(**overrides):
         "sessions_ago": 20,
         "entry_price": 100.0,
         "pivot": 100.0,
-        "stop_loss": 92.0,
+        "stop_loss": 100.0 * (1 - ETF_STOP_LOSS_PCT / 100),
         "quick_20pct": False,
         "hold_until_date": "2026-08-26",
     }
@@ -124,9 +125,9 @@ class EtfClassificationTest(unittest.TestCase):
         self.assertEqual(result["trading_status"], "DATA_INCOMPLETE")
         self.assertFalse(result["eligible"])
 
-    def test_holding_review_cuts_loss_at_eight_percent(self):
+    def test_holding_review_cuts_loss_at_six_percent(self):
         review = build_holding_review(
-            holding_item(last_price=91.5),
+            holding_item(last_price=93.5),
             buy_ready_event(),
         )
 
