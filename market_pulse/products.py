@@ -58,7 +58,7 @@ INDEX_KEYWORDS = [
 ]
 
 KIS_MASTER_BASE_URL = "https://new.real.download.dws.co.kr/common/master"
-ETF_SCREENER_VERSION = "kis-universe-v4-liquidity-cache-3h"
+ETF_SCREENER_VERSION = "kis-universe-v5-exit-strategy"
 ETF_SCREEN_CACHE_SECONDS = configured_cache_seconds("ETF_SCREEN_CACHE_SECONDS")
 ETF_PRELIMINARY_LIMIT = int(os.getenv("ETF_PRELIMINARY_LIMIT", "180"))
 ETF_FULL_ANALYSIS_LIMIT = int(os.getenv("ETF_FULL_ANALYSIS_LIMIT", "40"))
@@ -71,6 +71,20 @@ ETF_MIN_HISTORY_ROWS = 220
 ETF_VOLUME_THRESHOLD = float(os.getenv("ETF_VOLUME_THRESHOLD", "1.4"))
 ETF_BUY_ZONE_MAX_PCT = float(os.getenv("ETF_BUY_ZONE_MAX_PCT", "5"))
 ETF_STOP_LOSS_PCT = float(os.getenv("ETF_STOP_LOSS_PCT", "6"))
+ETF_PYRAMID2_MIN_PCT = float(os.getenv("ETF_PYRAMID2_MIN_PCT", "2.0"))
+ETF_PYRAMID2_MAX_PCT = float(os.getenv("ETF_PYRAMID2_MAX_PCT", "2.5"))
+ETF_PYRAMID3_MIN_PCT = float(os.getenv("ETF_PYRAMID3_MIN_PCT", "4.0"))
+ETF_PYRAMID3_MAX_PCT = float(os.getenv("ETF_PYRAMID3_MAX_PCT", "5.0"))
+ETF_HIGH_VOLUME_RATIO = float(os.getenv("ETF_HIGH_VOLUME_RATIO", "1.2"))
+ETF_STRONG_VOLUME_RATIO = float(os.getenv("ETF_STRONG_VOLUME_RATIO", "1.4"))
+ETF_PROFIT_ZONE_START_PCT = float(os.getenv("ETF_PROFIT_ZONE_START_PCT", "20"))
+ETF_PROFIT_ZONE_END_PCT = float(os.getenv("ETF_PROFIT_ZONE_END_PCT", "25"))
+ETF_ROUND_TRIP_TRIGGER_GAIN_PCT = float(os.getenv("ETF_ROUND_TRIP_TRIGGER_GAIN_PCT", "10"))
+ETF_ROUND_TRIP_REMAINING_GAIN_PCT = float(os.getenv("ETF_ROUND_TRIP_REMAINING_GAIN_PCT", "2"))
+ETF_FAST_LEADER_GAIN_PCT = float(os.getenv("ETF_FAST_LEADER_GAIN_PCT", "20"))
+ETF_FAST_LEADER_SESSIONS = int(os.getenv("ETF_FAST_LEADER_SESSIONS", "15"))
+ETF_RS_WEAKENING_DAYS = int(os.getenv("ETF_RS_WEAKENING_DAYS", "5"))
+ETF_FAILED_BREAKOUT_SESSIONS = int(os.getenv("ETF_FAILED_BREAKOUT_SESSIONS", "5"))
 ETF_BUY_READY_LIMIT = int(os.getenv("ETF_BUY_READY_LIMIT", "5"))
 ETF_WATCHLIST_LIMIT = int(os.getenv("ETF_WATCHLIST_LIMIT", "2"))
 ETF_HOLDING_LOOKBACK_SESSIONS = int(os.getenv("ETF_HOLDING_LOOKBACK_SESSIONS", "40"))
@@ -119,6 +133,7 @@ ETF_REASON_LABELS = {
 
 _ETF_RECOMMENDATION_CACHE: dict[str, Any] = {}
 _ETF_UNIVERSE_CACHE: dict[str, Any] = {}
+_ETF_BENCHMARK_HISTORY_CACHE: dict[str, pd.DataFrame] = {}
 
 DOMESTIC_KOSPI_FIELD_SPECS = [
     2, 1, 4, 4, 4,
@@ -1690,12 +1705,21 @@ def build_etf_holding_reviews(ranked: list[dict[str, Any]]) -> list[dict[str, An
 def holding_action_priority(status: str) -> int:
     priorities = {
         "SELL_CUT_LOSS": 0,
-        "SELL_DEFENSE": 1,
-        "DEFENSE": 2,
-        "PROFIT_PROTECT": 3,
-        "TAKE_PARTIAL": 4,
-        "EIGHT_WEEK_HOLD": 5,
-        "HOLD": 6,
+        "SELL": 1,
+        "FAILED_BREAKOUT_WARNING": 2,
+        "STRONG_SELL_WARNING": 3,
+        "PARTIAL_SELL": 4,
+        "ROUND_TRIP_WARNING": 5,
+        "SELL_WARNING": 6,
+        "DEFENSE": 7,
+        "RS_WEAKENING": 8,
+        "LOW_VOLUME_HIGH_WARNING": 9,
+        "PROFIT_ZONE_STRONG": 10,
+        "PROFIT_ZONE": 11,
+        "EIGHT_WEEK_HOLD_CANDIDATE": 12,
+        "PYRAMID_READY_3": 13,
+        "PYRAMID_READY_2": 14,
+        "HOLD": 15,
     }
     return priorities.get(status, 9)
 
@@ -2090,6 +2114,7 @@ def analyze_etf_candidate(
     benchmark_metrics = benchmark_item.get("signals", {}).get("trend", {}).get("metrics", {})
     benchmark_return60 = numeric_or_zero(benchmark_metrics.get("3개월 수익률"))
     benchmark_return120 = numeric_or_zero(benchmark_metrics.get("6개월 수익률"))
+    rs_metrics = recent_relative_strength_metrics(df, candidate)
     follow_through = market_item.get("follow_through")
     ftd_text = f"{follow_through['date']} FTD" if follow_through else "FTD 확인 필요"
     buy_high = pivot * 1.05 if pivot else None
@@ -2114,6 +2139,9 @@ def analyze_etf_candidate(
         "return120": return120,
         "rs_vs_market60": return60 - benchmark_return60,
         "rs_vs_market120": return120 - benchmark_return120,
+        "rs_trend5_pct": rs_metrics["rs_trend5_pct"],
+        "rs_weakening_days": rs_metrics["rs_weakening_days"],
+        "rs_benchmark_ticker": rs_metrics["benchmark_ticker"],
         "relative_strength_score": 0,
         "leader_percentile": 0,
         "leader_rank": 999,
@@ -2141,6 +2169,7 @@ def analyze_etf_candidate(
         "distance_high252": distance_high252,
         "min_avg_value": min_avg_value_for_etf(candidate),
         "volume_change_pct": volume_change,
+        "distribution_days": market_item.get("distribution_count", 0),
         "sell_signal": "관찰",
         "recent_buy_ready_event": recent_buy_ready_event,
         "holding_review": None,
@@ -2152,6 +2181,58 @@ def analyze_etf_candidate(
         "data_source": history_source,
         "data_status": market_item.get("data_status", "-"),
     }
+
+
+def recent_relative_strength_metrics(
+    df: pd.DataFrame,
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    benchmark_ticker = benchmark_ticker_for_etf(candidate)
+    if not benchmark_ticker or benchmark_ticker == candidate.get("yahoo_ticker"):
+        return {"benchmark_ticker": benchmark_ticker or "-", "rs_trend5_pct": 0.0, "rs_weakening_days": 0}
+
+    benchmark = benchmark_history(benchmark_ticker)
+    if benchmark.empty:
+        return {"benchmark_ticker": benchmark_ticker, "rs_trend5_pct": 0.0, "rs_weakening_days": 0}
+
+    aligned = (
+        pd.DataFrame({"etf": df["Close"]})
+        .join(benchmark["Close"].rename("benchmark"), how="inner")
+        .dropna()
+    )
+    if len(aligned) < ETF_RS_WEAKENING_DAYS + 1:
+        return {"benchmark_ticker": benchmark_ticker, "rs_trend5_pct": 0.0, "rs_weakening_days": 0}
+
+    recent = aligned.tail(ETF_RS_WEAKENING_DAYS + 1)
+    etf_return = pct(recent["etf"].iloc[-1], recent["etf"].iloc[0])
+    benchmark_return = pct(recent["benchmark"].iloc[-1], recent["benchmark"].iloc[0])
+    daily_rs = recent.pct_change().dropna()
+    rs_daily = (daily_rs["etf"] - daily_rs["benchmark"]) * 100
+    return {
+        "benchmark_ticker": benchmark_ticker,
+        "rs_trend5_pct": etf_return - benchmark_return,
+        "rs_weakening_days": int((rs_daily < 0).sum()),
+    }
+
+
+def benchmark_ticker_for_etf(candidate: dict[str, Any]) -> str:
+    if candidate.get("market_group") == "korea":
+        return "069500.KS" if candidate.get("signal_key") == "kospi200" else "226490.KS"
+    if candidate.get("signal_key") == "nasdaq_composite":
+        return "QQQM"
+    return "SPY"
+
+
+def benchmark_history(ticker: str) -> pd.DataFrame:
+    cached = _ETF_BENCHMARK_HISTORY_CACHE.get(ticker)
+    if cached is not None:
+        return cached
+    try:
+        history = fetch_yahoo_chart(ticker)
+    except Exception:
+        history = pd.DataFrame()
+    _ETF_BENCHMARK_HISTORY_CACHE[ticker] = history
+    return history
 
 
 def find_recent_buy_ready_event(
@@ -2202,7 +2283,45 @@ def find_recent_buy_ready_event(
     event["quick_20pct"] = quick_twenty_percent_move(df, event["position"], event["pivot"])
     hold_until_pos = min(len(df) - 1, event["position"] + ETF_HOLDING_LOOKBACK_SESSIONS)
     event["hold_until_date"] = df.iloc[hold_until_pos].name.strftime("%Y-%m-%d")
+    event.update(holding_event_metrics(df, event))
     return event
+
+
+def holding_event_metrics(df: pd.DataFrame, event: dict[str, Any]) -> dict[str, Any]:
+    start_pos = event["position"]
+    window = df.iloc[start_pos:].copy()
+    latest = df.iloc[-1]
+    latest_close = float(latest["Close"])
+    highest_price = float(window["High"].max()) if "High" in window else float(window["Close"].max())
+    current_return_pct = pct(latest_close, event["entry_price"])
+    max_unrealized_gain_pct = pct(highest_price, event["entry_price"])
+    latest_down_pct = float(latest["pct_change"]) if pd.notna(latest.get("pct_change")) else 0.0
+    down_days = df["pct_change"].iloc[start_pos:].dropna()
+    largest_down_pct = float(down_days.min()) if not down_days.empty else 0.0
+    close_location = close_location_ratio(latest)
+    latest_high = float(latest["High"]) if pd.notna(latest.get("High")) else latest_close
+    window_high = float(window["High"].max()) if "High" in window else highest_price
+    largest_down_day = latest_down_pct < 0 and math.isclose(latest_down_pct, largest_down_pct, abs_tol=0.01)
+    return {
+        "highest_price": highest_price,
+        "max_unrealized_gain_pct": max_unrealized_gain_pct,
+        "current_return_pct": current_return_pct,
+        "gain_giveback_pct": max(0.0, max_unrealized_gain_pct - current_return_pct),
+        "largest_down_day": bool(largest_down_day),
+        "latest_down_pct": latest_down_pct,
+        "largest_down_pct": largest_down_pct,
+        "close_location": close_location,
+        "new_high": bool(latest_high >= window_high * 0.999),
+    }
+
+
+def close_location_ratio(row: pd.Series) -> float | None:
+    high = float(row["High"]) if pd.notna(row.get("High")) else None
+    low = float(row["Low"]) if pd.notna(row.get("Low")) else None
+    close = float(row["Close"]) if pd.notna(row.get("Close")) else None
+    if high is None or low is None or close is None or high <= low:
+        return None
+    return (close - low) / (high - low)
 
 
 def historical_etf_signal_item(
@@ -2251,11 +2370,11 @@ def market_state_for_buy_ready_date(market_item: dict[str, Any], date: Any) -> s
 def quick_twenty_percent_move(df: pd.DataFrame, start_pos: int, pivot: float | None) -> bool:
     if not pivot:
         return False
-    end_pos = min(len(df), start_pos + 16)
+    end_pos = min(len(df), start_pos + ETF_FAST_LEADER_SESSIONS + 1)
     if end_pos <= start_pos:
         return False
     max_close = float(df.iloc[start_pos:end_pos]["Close"].max())
-    return max_close >= pivot * 1.20
+    return max_close >= pivot * (1 + ETF_FAST_LEADER_GAIN_PCT / 100)
 
 
 def build_holding_review(
@@ -2269,13 +2388,17 @@ def build_holding_review(
     pivot = event["pivot"]
     return_pct = pct(close, entry_price)
     pivot_gain_pct = pct(close, pivot)
-    status, action_label, explanation = classify_holding_action(item, event)
+    status, action_label, explanation, signal_level, sell_reasons = classify_holding_action(item, event)
+    defense_line, defense_line_label = holding_defense_line(item, event, return_pct)
+    category = item.get("category") or "sector"
     return {
         "ticker": item["ticker"],
         "name": item["name"],
         "listing": item["listing"],
         "country": item["country"],
         "index": item["index"],
+        "category": category,
+        "etf_type_label": etf_type_label(category),
         "market": item["market"],
         "data_source": item.get("data_source", "-"),
         "data_status": item.get("data_status", "-"),
@@ -2285,23 +2408,39 @@ def build_holding_review(
         "age_sessions": event["sessions_ago"],
         "entry_price": entry_price,
         "last_price": close,
+        "highest_price": event.get("highest_price", close),
         "return_pct": return_pct,
         "pivot": pivot,
         "pivot_gain_pct": pivot_gain_pct,
         "stop_loss": event["stop_loss"],
-        "profit_low": pivot * 1.20 if pivot else None,
-        "profit_high": pivot * 1.25 if pivot else None,
+        "profit_low": pivot * (1 + ETF_PROFIT_ZONE_START_PCT / 100) if pivot else None,
+        "profit_high": pivot * (1 + ETF_PROFIT_ZONE_END_PCT / 100) if pivot else None,
+        "defense_line": defense_line,
+        "defense_line_label": defense_line_label,
         "ma21": item.get("ma21"),
         "ma50": item.get("ma50"),
         "volume_ratio": item.get("volume_ratio", 0.0),
         "market_state": item.get("market_state", "-"),
         "market_state_label": item.get("market_state_label", "-"),
+        "distribution_days": item.get("distribution_days", 0),
+        "rs_trend5_pct": item.get("rs_trend5_pct", 0.0),
+        "rs_weakening_days": item.get("rs_weakening_days", 0),
+        "rs_benchmark_ticker": item.get("rs_benchmark_ticker", "-"),
+        "max_unrealized_gain_pct": event.get("max_unrealized_gain_pct", max(return_pct, 0.0)),
+        "gain_giveback_pct": event.get("gain_giveback_pct", 0.0),
+        "latest_down_pct": event.get("latest_down_pct", 0.0),
+        "largest_down_pct": event.get("largest_down_pct", 0.0),
+        "close_location": event.get("close_location"),
+        "new_high": event.get("new_high", False),
         "holding_status": status,
         "action_label": action_label,
         "explanation": explanation,
+        "sell_signal_level": signal_level,
+        "sell_reason_codes": sell_reasons,
         "sell_signal": item.get("sell_signal", "-"),
         "quick_20pct": event.get("quick_20pct", False),
         "hold_until_date": event.get("hold_until_date", "-"),
+        "pyramid_plan": evaluate_pyramiding(return_pct),
         "can_slim_score": item.get("can_slim_score", 0),
         "leader_rank": item.get("leader_rank", 999),
     }
@@ -2310,7 +2449,7 @@ def build_holding_review(
 def classify_holding_action(
     item: dict[str, Any],
     event: dict[str, Any],
-) -> tuple[str, str, str]:
+) -> tuple[str, str, str, int, list[str]]:
     close = item["last_price"]
     entry_price = event["entry_price"]
     pivot = event["pivot"]
@@ -2319,26 +2458,235 @@ def classify_holding_action(
     volume_ratio = item.get("volume_ratio", 0.0)
     return_pct = pct(close, entry_price)
     pivot_gain_pct = pct(close, pivot)
+    category = item.get("category") or "sector"
+    broad_index = category == "broad"
+    distribution_days = int(item.get("distribution_days") or 0)
+    rs_trend5_pct = float(item.get("rs_trend5_pct") or 0.0)
+    rs_weakening_days = int(item.get("rs_weakening_days") or 0)
+    below_21ema = bool(ma21 and close < ma21)
+    below_50sma = bool(ma50 and close < ma50)
+    high_volume = volume_ratio >= ETF_HIGH_VOLUME_RATIO
+    strong_volume = volume_ratio >= ETF_STRONG_VOLUME_RATIO
+    rs_weakening = rs_trend5_pct < 0 and rs_weakening_days >= min(3, ETF_RS_WEAKENING_DAYS)
+
+    def result(
+        status: str,
+        label: str,
+        explanation: str,
+        level: int,
+        reasons: list[str],
+    ) -> tuple[str, str, str, int, list[str]]:
+        return status, label, explanation, level, reasons
 
     if close <= event["stop_loss"] or return_pct <= -ETF_STOP_LOSS_PCT:
-        return (
+        return result(
             "SELL_CUT_LOSS",
             "매도/손절",
             f"BUY_READY 가정 매수가 대비 -{ETF_STOP_LOSS_PCT:g}% 손절 기준을 이탈했습니다.",
+            4,
+            ["HARD_STOP"],
+        )
+    if event.get("sessions_ago", 0) <= ETF_FAILED_BREAKOUT_SESSIONS and pivot and close < pivot:
+        if below_21ema and high_volume:
+            return result(
+                "FAILED_BREAKOUT_WARNING",
+                "조기매도 검토",
+                "피벗 돌파 후 5거래일 안에 피벗과 21EMA를 거래량 증가와 함께 이탈했습니다.",
+                3,
+                ["FAILED_BREAKOUT", "21EMA_HIGH_VOLUME_BREAK"],
+            )
+        return result(
+            "FAILED_BREAKOUT_WARNING",
+            "돌파 실패 경고",
+            "피벗 돌파 직후 다시 피벗 아래로 내려와 돌파 성공 여부를 다시 확인해야 합니다.",
+            2,
+            ["FAILED_BREAKOUT"],
+        )
+    if below_50sma and high_volume:
+        return result(
+            "SELL",
+            "매도",
+            "50SMA를 거래량 증가와 함께 이탈해 포지션 대부분 또는 전량 매도를 검토합니다.",
+            4,
+            ["50SMA_HIGH_VOLUME_BREAK"],
+        )
+    if below_50sma:
+        return result(
+            "STRONG_SELL_WARNING",
+            "강한 매도 경계",
+            "50SMA 아래로 내려와 중기 추세 훼손 가능성이 커졌습니다.",
+            3,
+            ["50SMA_BREAK"],
         )
     if item.get("market_state") == "MARKET_CORRECTION":
-        return "DEFENSE", "방어 강화", "기준 시장이 조정장이라 ETF 보유 비중 축소를 우선 검토합니다."
-    if ma50 and close < ma50 and volume_ratio >= 1.0:
-        return "SELL_DEFENSE", "매도/방어", "거래량을 동반해 50일선을 이탈해 보유 리스크가 커졌습니다."
+        return result(
+            "DEFENSE",
+            "방어 강화",
+            "기준 시장이 조정장으로 바뀌어 신규 추가매수는 멈추고 보유 비중 축소를 우선 검토합니다.",
+            3,
+            ["MARKET_CORRECTION"],
+        )
+    if below_21ema and strong_volume and return_pct >= ETF_ROUND_TRIP_TRIGGER_GAIN_PCT:
+        return result(
+            "PARTIAL_SELL",
+            "일부 매도 검토",
+            "수익권에서 21EMA를 강한 거래량으로 이탈해 1/3~1/2 일부매도를 검토합니다.",
+            3,
+            ["21EMA_STRONG_VOLUME_BREAK"],
+        )
+    if below_21ema and high_volume and return_pct > 0:
+        return result(
+            "PARTIAL_SELL",
+            "일부 매도 검토",
+            "수익권에서 21EMA를 거래량 증가와 함께 이탈했습니다.",
+            2,
+            ["21EMA_HIGH_VOLUME_BREAK"],
+        )
+    if below_21ema:
+        return result(
+            "SELL_WARNING",
+            "매도 경계",
+            "21EMA 아래로 내려와 다음 거래일 회복 여부를 확인해야 합니다.",
+            1,
+            ["21EMA_BREAK"],
+        )
+    if (
+        event.get("max_unrealized_gain_pct", 0.0) >= ETF_ROUND_TRIP_TRIGGER_GAIN_PCT + 5
+        and return_pct <= ETF_ROUND_TRIP_REMAINING_GAIN_PCT + 1
+    ):
+        return result(
+            "ROUND_TRIP_WARNING",
+            "수익 반납 경고",
+            "한때 큰 미실현 이익이 있었지만 대부분 반납해 초기 손절선까지 기다리지 않는 방어가 필요합니다.",
+            2,
+            ["ROUND_TRIP_RISK"],
+        )
+    if (
+        event.get("max_unrealized_gain_pct", 0.0) >= ETF_ROUND_TRIP_TRIGGER_GAIN_PCT
+        and return_pct <= ETF_ROUND_TRIP_REMAINING_GAIN_PCT
+    ):
+        return result(
+            "ROUND_TRIP_WARNING",
+            "수익 반납 경고",
+            "미실현 이익이 크게 줄어든 상태라 보유 강도를 낮춰 봅니다.",
+            2,
+            ["ROUND_TRIP_RISK"],
+        )
+    if (
+        return_pct >= 8
+        and event.get("largest_down_day")
+        and high_volume
+        and event.get("close_location") is not None
+        and event["close_location"] < 0.35
+    ):
+        return result(
+            "PARTIAL_SELL",
+            "일부 매도 검토",
+            "매수 이후 가장 큰 하락일이 거래량 증가와 함께 나왔고 종가가 저가권에 머물렀습니다.",
+            2,
+            ["LARGEST_DOWN_DAY"],
+        )
+    if distribution_days >= 4 and below_21ema and rs_trend5_pct < 0:
+        return result(
+            "PARTIAL_SELL",
+            "일부 매도 검토",
+            "시장 분산일 부담이 커진 가운데 ETF가 21EMA 아래이고 상대강도도 약해졌습니다.",
+            2,
+            ["MARKET_DISTRIBUTION_CLUSTER", "RS_WEAKENING"],
+        )
+    if rs_weakening and not broad_index:
+        return result(
+            "RS_WEAKENING",
+            "상대강도 약화",
+            f"{item.get('rs_benchmark_ticker', '기준 ETF')} 대비 최근 {ETF_RS_WEAKENING_DAYS}거래일 상대강도가 약해졌습니다.",
+            1,
+            ["RS_WEAKENING"],
+        )
+    if event.get("new_high") and volume_ratio < 1.0:
+        return result(
+            "LOW_VOLUME_HIGH_WARNING",
+            "신고가 거래량 부족",
+            "신고가 근처지만 거래량이 평균보다 적어 추세 확인 강도는 낮게 봅니다.",
+            1,
+            ["LOW_VOLUME_HIGH"],
+        )
     if event.get("quick_20pct") and event.get("sessions_ago", 0) < ETF_HOLDING_LOOKBACK_SESSIONS:
-        return "EIGHT_WEEK_HOLD", "8주 보유 우선", "20% 이상 빠른 상승 조건이 있어 명확한 매도 신호 전까지 8주 보유 예외를 우선 적용합니다."
-    if pivot_gain_pct >= 25:
-        return "PROFIT_PROTECT", "이익 보호", "피벗 대비 +25%를 넘어 이익 보호와 분할 환매를 검토할 구간입니다."
-    if pivot_gain_pct >= 20:
-        return "TAKE_PARTIAL", "일부 이익실현", "피벗 대비 +20~25% 이익실현 구간에 진입했습니다."
-    if ma21 and close < ma21 and volume_ratio >= 1.2:
-        return "DEFENSE", "일부 방어", "21EMA를 거래량 증가와 함께 이탈해 일부 환매 또는 방어를 검토합니다."
-    return "HOLD", "보유 유지", "손절선, 이익실현 구간, 주요 이동평균 이탈 신호가 아직 확인되지 않았습니다."
+        return result(
+            "EIGHT_WEEK_HOLD_CANDIDATE",
+            "8주 보유 후보",
+            "3주 안에 +20% 이상 오른 강한 ETF라 명확한 매도 신호 전까지 8주 보유 후보로 봅니다.",
+            0,
+            ["EIGHT_WEEK_HOLD_CANDIDATE"],
+        )
+    if not broad_index and pivot_gain_pct >= ETF_PROFIT_ZONE_END_PCT:
+        return result(
+            "PROFIT_ZONE_STRONG",
+            "이익 보호 강화",
+            f"섹터/테마형 ETF가 피벗 대비 +{ETF_PROFIT_ZONE_END_PCT:g}%를 넘어 분할 환매와 이익 보호를 적극 검토합니다.",
+            1,
+            ["PROFIT_ZONE_STRONG"],
+        )
+    if not broad_index and pivot_gain_pct >= ETF_PROFIT_ZONE_START_PCT:
+        return result(
+            "PROFIT_ZONE",
+            "이익실현 검토",
+            f"섹터/테마형 ETF가 피벗 대비 +{ETF_PROFIT_ZONE_START_PCT:g}~{ETF_PROFIT_ZONE_END_PCT:g}% 이익실현 검토 구간에 들어왔습니다.",
+            1,
+            ["PROFIT_ZONE"],
+        )
+
+    pyramid = evaluate_pyramiding(return_pct)
+    if pyramid["status"] != "NO_ADD":
+        return result(
+            pyramid["status"],
+            pyramid["label"],
+            pyramid["explanation"],
+            0,
+            [pyramid["status"]],
+        )
+    return result(
+        "HOLD",
+        "보유 유지",
+        "손절선, 이익실현 구간, 주요 이동평균 이탈 신호가 아직 확인되지 않았습니다.",
+        0,
+        [],
+    )
+
+
+def evaluate_pyramiding(return_pct: float) -> dict[str, str]:
+    if ETF_PYRAMID2_MIN_PCT <= return_pct <= ETF_PYRAMID2_MAX_PCT:
+        return {
+            "status": "PYRAMID_READY_2",
+            "label": "2차 추가매수 후보",
+            "explanation": f"최초 BUY_READY 가정 매수가 대비 +{ETF_PYRAMID2_MIN_PCT:g}~{ETF_PYRAMID2_MAX_PCT:g}% 구간입니다. 하락 물타기가 아니라 수익 포지션에만 추가하는 후보입니다.",
+        }
+    if ETF_PYRAMID3_MIN_PCT <= return_pct <= ETF_PYRAMID3_MAX_PCT:
+        return {
+            "status": "PYRAMID_READY_3",
+            "label": "3차 추가매수 후보",
+            "explanation": f"최초 BUY_READY 가정 매수가 대비 +{ETF_PYRAMID3_MIN_PCT:g}~{ETF_PYRAMID3_MAX_PCT:g}% 구간입니다. 이미 2차 추가가 끝난 포지션이라면 3차 후보입니다.",
+        }
+    return {"status": "NO_ADD", "label": "추가매수 없음", "explanation": "추가매수 구간이 아닙니다."}
+
+
+def holding_defense_line(
+    item: dict[str, Any],
+    event: dict[str, Any],
+    return_pct: float,
+) -> tuple[float | None, str]:
+    ma21 = item.get("ma21")
+    pivot = event.get("pivot")
+    if return_pct >= 10 and ma21:
+        return ma21, "21EMA 방어선"
+    if return_pct >= 5 and pivot:
+        return pivot, "Pivot/본전 방어선"
+    return event.get("stop_loss"), f"-{ETF_STOP_LOSS_PCT:g}% 초기 손절선"
+
+
+def etf_type_label(category: str) -> str:
+    if category == "broad":
+        return "Broad Index ETF"
+    return "Sector/Theme ETF"
 
 
 def fetch_sufficient_etf_history(candidate: dict[str, Any]) -> tuple[pd.DataFrame, str]:
@@ -2767,8 +3115,8 @@ def current_sell_signal(item: dict[str, Any]) -> str:
         return "21EMA 대량거래 이탈: 일부 방어"
     if item["market_state"] == "UPTREND_UNDER_PRESSURE":
         return "시장 분산일 누적: 신규 매수 축소"
-    if item["category"] != "broad" and pivot and close >= pivot * 1.20:
-        return "섹터/테마 ETF 20~25% 이익보호 구간"
+    if item["category"] != "broad" and pivot and close >= pivot * (1 + ETF_PROFIT_ZONE_START_PCT / 100):
+        return f"섹터/테마 ETF +{ETF_PROFIT_ZONE_START_PCT:g}~{ETF_PROFIT_ZONE_END_PCT:g}% 이익보호 구간"
     return "특별한 매도 신호 없음"
 
 

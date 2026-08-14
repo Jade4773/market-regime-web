@@ -47,6 +47,10 @@ def holding_item(**overrides):
         "sell_signal": "특별한 매도 신호 없음",
         "can_slim_score": 80,
         "leader_rank": 1,
+        "category": "sector",
+        "rs_trend5_pct": 0.0,
+        "rs_weakening_days": 0,
+        "distribution_days": 0,
     }
     item.update(overrides)
     return item
@@ -63,6 +67,11 @@ def buy_ready_event(**overrides):
         "stop_loss": 100.0 * (1 - ETF_STOP_LOSS_PCT / 100),
         "quick_20pct": False,
         "hold_until_date": "2026-08-26",
+        "max_unrealized_gain_pct": 10.0,
+        "gain_giveback_pct": 0.0,
+        "largest_down_day": False,
+        "close_location": 0.7,
+        "new_high": False,
     }
     event.update(overrides)
     return event
@@ -139,7 +148,7 @@ class EtfClassificationTest(unittest.TestCase):
             buy_ready_event(),
         )
 
-        self.assertEqual(review["action_label"], "일부 이익실현")
+        self.assertEqual(review["action_label"], "이익실현 검토")
 
     def test_holding_review_applies_eight_week_exception(self):
         review = build_holding_review(
@@ -147,7 +156,32 @@ class EtfClassificationTest(unittest.TestCase):
             buy_ready_event(quick_20pct=True),
         )
 
-        self.assertEqual(review["action_label"], "8주 보유 우선")
+        self.assertEqual(review["action_label"], "8주 보유 후보")
+
+    def test_holding_review_flags_pyramid_ready_two(self):
+        review = build_holding_review(
+            holding_item(last_price=102.2, ma21=100.0, ma50=95.0),
+            buy_ready_event(),
+        )
+
+        self.assertEqual(review["action_label"], "2차 추가매수 후보")
+
+    def test_holding_review_failed_breakout_before_stop(self):
+        review = build_holding_review(
+            holding_item(last_price=99.0, ma21=101.0, volume_ratio=1.3),
+            buy_ready_event(sessions_ago=3),
+        )
+
+        self.assertEqual(review["action_label"], "조기매도 검토")
+        self.assertIn("FAILED_BREAKOUT", review["sell_reason_codes"])
+
+    def test_broad_index_holds_instead_of_profit_zone(self):
+        review = build_holding_review(
+            holding_item(last_price=121.0, category="broad"),
+            buy_ready_event(),
+        )
+
+        self.assertEqual(review["action_label"], "보유 유지")
 
 
 if __name__ == "__main__":

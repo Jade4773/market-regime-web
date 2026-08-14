@@ -7,6 +7,19 @@ import streamlit as st
 
 from market_pulse.data import DEFAULT_CACHE_SECONDS, get_market_snapshot
 from market_pulse.products import (
+    ETF_FAST_LEADER_GAIN_PCT,
+    ETF_FAST_LEADER_SESSIONS,
+    ETF_FAILED_BREAKOUT_SESSIONS,
+    ETF_HIGH_VOLUME_RATIO,
+    ETF_PROFIT_ZONE_END_PCT,
+    ETF_PROFIT_ZONE_START_PCT,
+    ETF_PYRAMID2_MAX_PCT,
+    ETF_PYRAMID2_MIN_PCT,
+    ETF_PYRAMID3_MAX_PCT,
+    ETF_PYRAMID3_MIN_PCT,
+    ETF_ROUND_TRIP_REMAINING_GAIN_PCT,
+    ETF_ROUND_TRIP_TRIGGER_GAIN_PCT,
+    ETF_RS_WEAKENING_DAYS,
     ETF_STOP_LOSS_PCT,
     build_etf_market_summary,
     build_etf_recommendations,
@@ -22,7 +35,7 @@ TAB_LABELS = {
     "risk": "보유/매도",
 }
 
-APP_VERSION = "holding-sell-v1"
+APP_VERSION = "holding-exit-v2"
 ELS_CACHE_VERSION = "els-score-top5-v1"
 
 
@@ -641,6 +654,26 @@ def dashboard() -> None:
             padding:0;
         }
         .reason-block ul:last-child { margin-bottom:0; }
+        .reason-list {
+            margin-top:16px;
+            padding:13px 14px;
+            border:1px solid #e2ebf7;
+            border-radius:8px;
+            background:#fbfdff;
+        }
+        .reason-list span {
+            display:block;
+            color:#8ba0bc;
+            font-size:12px;
+            margin-bottom:6px;
+        }
+        .reason-list ul {
+            margin:0 0 0 18px;
+            padding:0;
+            color:#416b9f;
+            font-size:12px;
+            line-height:1.55;
+        }
         .trend-score-grid {
             display:grid;
             grid-template-columns:repeat(3, minmax(0,1fr));
@@ -1026,13 +1059,22 @@ def render_holding_sell_tab(snapshot: dict[str, Any]) -> None:
 
 def render_holding_review_card(review: dict[str, Any]) -> None:
     action_label = review["action_label"]
+    reason_items = "".join(
+        f"<li>{escape(reason_code_label(reason))}</li>"
+        for reason in review.get("sell_reason_codes", [])
+    )
+    reason_block = (
+        f"<div class=\"reason-list\"><span>판정 사유</span><ul>{reason_items}</ul></div>"
+        if reason_items
+        else ""
+    )
     st.markdown(
         f"""
         <div class="market-card">
           <div class="card-head">
             <div>
               <h3>{review["ticker"]} · {review["name"]}</h3>
-              <p>{review["listing"]} · 투자국가 {review["country"]} · {review["index"]}</p>
+              <p>{review["listing"]} · {review["etf_type_label"]} · 투자국가 {review["country"]} · {review["index"]}</p>
             </div>
             <span class="regime-badge" style="{holding_badge_style(review["holding_status"], action_label)}">{action_label}</span>
           </div>
@@ -1041,6 +1083,11 @@ def render_holding_review_card(review: dict[str, Any]) -> None:
             <span class="{'up' if review["return_pct"] >= 0 else 'down'}">{format_pct(review["return_pct"])}</span>
           </div>
           <p class="explain">{review["explanation"]}</p>
+          <div class="signal-row">
+            <span>매도신호 강도</span>
+            <div class="meter"><span style="width:{review["sell_signal_level"] * 25}%"></span></div>
+            <strong>{sell_signal_level_label(review["sell_signal_level"])}</strong>
+          </div>
           <div class="signal-row">
             <span>CAN SLIM Score</span>
             <div class="meter"><span style="width:{review["can_slim_score"]}%"></span></div>
@@ -1051,6 +1098,11 @@ def render_holding_review_card(review: dict[str, Any]) -> None:
             <div><span>경과</span><strong>{review["age_sessions"]}거래일</strong></div>
             <div><span>연속 신호</span><strong>{review["signal_count"]}회</strong></div>
           </div>
+          <div class="stat-grid">
+            <div><span>현재수익</span><strong>{format_pct(review["return_pct"])}</strong></div>
+            <div><span>최고수익</span><strong>{format_pct(review["max_unrealized_gain_pct"])}</strong></div>
+            <div><span>수익반납</span><strong>{format_pct(review["gain_giveback_pct"])}</strong></div>
+          </div>
           <div class="ftd-line">
             <span>가정 매수가 / 손절선</span>
             <strong>{format_number(review["entry_price"])} / {format_number(review["stop_loss"])}</strong>
@@ -1060,13 +1112,26 @@ def render_holding_review_card(review: dict[str, Any]) -> None:
             <strong>{format_number(review["pivot"])} / {format_number(review["profit_low"])} ~ {format_number(review["profit_high"])}</strong>
           </div>
           <div class="ftd-line">
+            <span>현재 방어선</span>
+            <strong>{review["defense_line_label"]} · {format_number(review["defense_line"])}</strong>
+          </div>
+          <div class="ftd-line">
             <span>21EMA / 50SMA / Volume Ratio</span>
             <strong>{format_number(review["ma21"])} / {format_number(review["ma50"])} / {format_ratio(review["volume_ratio"])}</strong>
+          </div>
+          <div class="ftd-line">
+            <span>RS 5일 / 약화일수</span>
+            <strong>{review["rs_benchmark_ticker"]} 대비 {format_pct(review["rs_trend5_pct"])} · {review["rs_weakening_days"]}일</strong>
+          </div>
+          <div class="ftd-line">
+            <span>분산일 / 추가매수 구간</span>
+            <strong>{review["distribution_days"]}회 · {review["pyramid_plan"]["label"]}</strong>
           </div>
           <div class="ftd-line">
             <span>시장 상태 / 현재 매도 신호</span>
             <strong>{review["market_state_label"]} · {review["sell_signal"]}</strong>
           </div>
+          {reason_block}
         </div>
         """,
         unsafe_allow_html=True,
@@ -1077,11 +1142,55 @@ def render_holding_review_card(review: dict[str, Any]) -> None:
 
 
 def holding_badge_style(status: str, label: str) -> str:
-    if status in {"SELL_CUT_LOSS", "SELL_DEFENSE", "DEFENSE"}:
+    if status in {"SELL_CUT_LOSS", "SELL", "FAILED_BREAKOUT_WARNING", "STRONG_SELL_WARNING"}:
         return badge_style("매도/방어")
-    if status in {"TAKE_PARTIAL", "PROFIT_PROTECT"}:
+    if status in {
+        "PARTIAL_SELL",
+        "ROUND_TRIP_WARNING",
+        "SELL_WARNING",
+        "DEFENSE",
+        "RS_WEAKENING",
+        "LOW_VOLUME_HIGH_WARNING",
+        "PROFIT_ZONE",
+        "PROFIT_ZONE_STRONG",
+    }:
         return badge_style("주의")
     return badge_style("매수 우위" if "보유" in label else label)
+
+
+def sell_signal_level_label(level: int | float | None) -> str:
+    labels = {
+        0: "NONE",
+        1: "CAUTION",
+        2: "PARTIAL",
+        3: "STRONG",
+        4: "EXIT",
+    }
+    return labels.get(int(level or 0), "NONE")
+
+
+def reason_code_label(code: str) -> str:
+    labels = {
+        "HARD_STOP": "절대 손절선 이탈",
+        "FAILED_BREAKOUT": "피벗 돌파 후 재이탈",
+        "21EMA_HIGH_VOLUME_BREAK": "21EMA 거래량 증가 이탈",
+        "21EMA_STRONG_VOLUME_BREAK": "21EMA 강한 거래량 이탈",
+        "21EMA_BREAK": "21EMA 이탈",
+        "50SMA_HIGH_VOLUME_BREAK": "50SMA 거래량 증가 이탈",
+        "50SMA_BREAK": "50SMA 이탈",
+        "MARKET_CORRECTION": "기준 시장 조정장",
+        "ROUND_TRIP_RISK": "미실현 이익 반납 위험",
+        "LARGEST_DOWN_DAY": "매수 후 최대 하락일",
+        "MARKET_DISTRIBUTION_CLUSTER": "시장 분산일 누적",
+        "RS_WEAKENING": "벤치마크 대비 상대강도 약화",
+        "LOW_VOLUME_HIGH": "신고가 구간 거래량 부족",
+        "EIGHT_WEEK_HOLD_CANDIDATE": "8주 보유 후보",
+        "PROFIT_ZONE_STRONG": "강한 이익 보호 구간",
+        "PROFIT_ZONE": "기본 이익실현 검토 구간",
+        "PYRAMID_READY_2": "2차 추가매수 후보 구간",
+        "PYRAMID_READY_3": "3차 추가매수 후보 구간",
+    }
+    return labels.get(code, code)
 
 
 def render_holding_sell_guide() -> None:
@@ -1093,16 +1202,19 @@ def render_holding_sell_guide() -> None:
             - 상품추천 ETF 스크리너의 상세 재계산 대상 중 최근 40거래일, 약 8주 안에 `BUY_READY` 조건이 나온 ETF만 표시합니다.
             - 과거 추천 기록 DB가 따로 있는 것은 아니므로, 현재 확보한 ETF 일봉으로 과거 신호를 다시 계산합니다.
             - 실제 매수가를 모르기 때문에 `BUY_READY` 최초 발생일의 종가를 가정 매수가로 사용합니다.
+            - 이 방식은 공식 CAN SLIM 규칙이 아니라 **O'Neil-inspired ETF Exit Strategy**, 즉 ETF용 변형 전략입니다.
 
-            **판정 기준**
+            **판정 우선순위**
 
-            - **매도/손절:** 가정 매수가 대비 -{ETF_STOP_LOSS_PCT:g}% 손절선 이탈
-            - **매도/방어:** 거래량을 동반한 50일선 이탈
-            - **방어 강화:** 기준 시장이 조정장으로 바뀌었거나 21EMA를 거래량 증가와 함께 이탈
-            - **일부 이익실현:** 피벗 대비 +20~25% 구간 진입
-            - **이익 보호:** 피벗 대비 +25% 초과
-            - **8주 보유 우선:** BUY_READY 이후 3주 안에 +20% 이상 급등한 경우, 명확한 매도 신호 전까지 8주 보유 예외를 우선 적용
-            - **보유 유지:** 위 매도·방어·이익실현 조건이 아직 확인되지 않은 상태
+            - **매도/손절:** 가정 매수가 대비 -{ETF_STOP_LOSS_PCT:g}% 절대 손절선 이탈
+            - **돌파 실패 경고:** BUY_READY 이후 {ETF_FAILED_BREAKOUT_SESSIONS}거래일 안에 피벗 아래로 재이탈. 21EMA와 거래량까지 훼손되면 조기매도 검토
+            - **50SMA 이탈:** 50일선을 이탈하면 강한 경계, 거래량 {ETF_HIGH_VOLUME_RATIO:g}배 이상이면 매도 우선
+            - **21EMA 이탈:** 수익권에서 21EMA를 거래량 {ETF_HIGH_VOLUME_RATIO:g}배 이상으로 이탈하면 1/3~1/2 일부매도 검토
+            - **수익 반납 경고:** 최고 미실현 수익이 +{ETF_ROUND_TRIP_TRIGGER_GAIN_PCT:g}% 이상이었다가 현재 수익이 +{ETF_ROUND_TRIP_REMAINING_GAIN_PCT:g}% 안팎으로 줄어들면 방어
+            - **분산일·상대강도:** 분산일이 누적되고 ETF가 21EMA 아래이며 벤치마크 대비 {ETF_RS_WEAKENING_DAYS}거래일 상대강도가 약하면 일부매도 검토
+            - **섹터/테마 이익구간:** Broad Index ETF는 추세 추종을 우선하고, Sector/Theme ETF는 피벗 대비 +{ETF_PROFIT_ZONE_START_PCT:g}~{ETF_PROFIT_ZONE_END_PCT:g}%에서 이익실현 검토
+            - **8주 보유 후보:** BUY_READY 이후 {ETF_FAST_LEADER_SESSIONS}거래일 안에 +{ETF_FAST_LEADER_GAIN_PCT:g}% 이상 급등하면 명확한 매도 신호 전까지 8주 보유 후보
+            - **추가매수 후보:** 하락 물타기는 금지하고, 가정 매수가 대비 +{ETF_PYRAMID2_MIN_PCT:g}~{ETF_PYRAMID2_MAX_PCT:g}%는 2차, +{ETF_PYRAMID3_MIN_PCT:g}~{ETF_PYRAMID3_MAX_PCT:g}%는 3차 추가매수 후보로만 표시
 
             이 탭은 새 ETF를 고르는 화면이 아니라, 이미 `BUY_READY`가 떴던 ETF를 산 것으로 가정했을 때
             지금 **보유할지, 줄일지, 팔지**를 점검하는 화면입니다.
