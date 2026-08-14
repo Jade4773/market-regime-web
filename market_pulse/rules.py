@@ -159,6 +159,7 @@ def prepare(history: pd.DataFrame) -> pd.DataFrame:
     df["pct_change"] = df["Close"].pct_change() * 100
     df["volume_up"] = df["Volume"] > df["Volume"].shift(1)
     df["ma20"] = df["Close"].rolling(20).mean()
+    df["ema21"] = df["Close"].ewm(span=21, adjust=False).mean()
     df["ma50"] = df["Close"].rolling(50).mean()
     df["ma150"] = df["Close"].rolling(150).mean()
     df["ma200"] = df["Close"].rolling(200).mean()
@@ -181,6 +182,8 @@ def prepare(history: pd.DataFrame) -> pd.DataFrame:
     df["distance_high252"] = (df["Close"] / df["high252"] - 1) * 100
     df["distance_low252"] = (df["Close"] / df["low252"] - 1) * 100
     df["ma200_slope20"] = (df["ma200"] / df["ma200"].shift(20) - 1) * 100
+    df["ema21_slope10"] = (df["ema21"] / df["ema21"].shift(10) - 1) * 100
+    df["ma50_slope20"] = (df["ma50"] / df["ma50"].shift(20) - 1) * 100
     df["close_above_ma50"] = df["Close"] > df["ma50"]
     df["close_above_ma200"] = df["Close"] > df["ma200"]
     return df
@@ -189,11 +192,12 @@ def prepare(history: pd.DataFrame) -> pd.DataFrame:
 def analyze_trend_signal(df: pd.DataFrame) -> dict[str, Any]:
     latest = df.iloc[-1]
     close = float(latest["Close"])
+    ema21 = float(latest["ema21"]) if pd.notna(latest["ema21"]) else None
     ma50 = float(latest["ma50"]) if pd.notna(latest["ma50"]) else None
-    ma150 = float(latest["ma150"]) if pd.notna(latest["ma150"]) else None
     ma200 = float(latest["ma200"]) if pd.notna(latest["ma200"]) else None
-    return63 = float(latest["return63"]) if pd.notna(latest["return63"]) else 0.0
-    return126 = float(latest["return126"]) if pd.notna(latest["return126"]) else 0.0
+    return20 = float(latest["return20"]) if pd.notna(latest["return20"]) else 0.0
+    return60 = float(latest["return60"]) if pd.notna(latest["return60"]) else 0.0
+    return120 = float(latest["return126"]) if pd.notna(latest["return126"]) else 0.0
     return252 = float(latest["return252"]) if pd.notna(latest["return252"]) else None
     distance_high252 = (
         float(latest["distance_high252"]) if pd.notna(latest["distance_high252"]) else None
@@ -204,64 +208,234 @@ def analyze_trend_signal(df: pd.DataFrame) -> dict[str, Any]:
     ma200_slope20 = (
         float(latest["ma200_slope20"]) if pd.notna(latest["ma200_slope20"]) else None
     )
+    ema21_slope10 = (
+        float(latest["ema21_slope10"]) if pd.notna(latest["ema21_slope10"]) else None
+    )
+    ma50_slope20 = (
+        float(latest["ma50_slope20"]) if pd.notna(latest["ma50_slope20"]) else None
+    )
+    avg_volume20 = float(df["Volume"].rolling(20).mean().iloc[-1])
+    volume = float(latest["Volume"]) if pd.notna(latest["Volume"]) else 0.0
+    volume_ratio = volume / avg_volume20 if avg_volume20 else 0.0
+    base = detect_trend_base(df)
+    pivot = base["pivot"]
+    pivot_distance = _pct(close, pivot) if pivot else None
+    buy_low = pivot
+    buy_high = pivot * 1.05 if pivot else None
 
-    score = 0
-    reasons = []
+    trend_checks = trend_checklist(
+        close, ema21, ma50, ma200, ema21_slope10, ma50_slope20, ma200_slope20, distance_high252
+    )
+    trend_score = round(sum(100 if check["pass"] else 0 for check in trend_checks) / len(trend_checks))
+    rs_score = relative_strength_score(return20, return60, return120, distance_high252)
+    setup_score = setup_quality_score(base, pivot_distance, volume_ratio)
+    score = round((trend_score * 0.45) + (rs_score * 0.30) + (setup_score * 0.25))
+    trading_status, action_label, explanation = trend_trading_status(
+        close=close,
+        ema21=ema21,
+        ma50=ma50,
+        pivot=pivot,
+        pivot_distance=pivot_distance,
+        base_exists=base["base_exists"],
+        volume_ratio=volume_ratio,
+    )
 
-    if ma50 and close > ma50:
-        score += 15
-        reasons.append("가격이 50일선 위")
-    if ma150 and close > ma150:
-        score += 15
-        reasons.append("가격이 150일선 위")
-    if ma200 and close > ma200:
-        score += 15
-        reasons.append("가격이 200일선 위")
-    if ma50 and ma150 and ma200 and ma50 > ma150 > ma200:
-        score += 15
-        reasons.append("50일선 > 150일선 > 200일선")
-    if ma200_slope20 is not None and ma200_slope20 > 0:
-        score += 10
-        reasons.append("200일선 상승 중")
-    if return63 > 0:
-        score += 10
-        reasons.append("3개월 수익률 플러스")
-    if return126 > 0:
-        score += 10
-        reasons.append("6개월 수익률 플러스")
-    if distance_high252 is not None and distance_high252 >= -15:
-        score += 5
-        reasons.append("52주 고점 대비 낙폭 제한")
-    if distance_low252 is not None and distance_low252 >= 20:
-        score += 5
-        reasons.append("52주 저점 대비 충분한 회복")
-
-    opinion = opinion_from_score(score)
-    if opinion == "매수 우위":
-        explanation = "추세 템플릿과 상대강도 조건이 대체로 우호적입니다."
-    elif opinion == "중립/관망":
-        explanation = "상승 추세 조건과 모멘텀 조건이 엇갈려 추가 확인이 필요합니다."
-    else:
-        explanation = "주요 이동평균 배열 또는 상대강도 조건이 약해 방어적으로 봅니다."
+    opinion = trend_opinion_from_status(trading_status, score)
+    details = [
+        f"Trend {trend_score}/100",
+        f"Relative Strength {rs_score}/100",
+        f"Setup {setup_score}/100",
+        f"Action {action_label}",
+    ]
 
     return {
         "name": "추세/모멘텀",
         "opinion": opinion,
         "score": score,
         "explanation": explanation,
-        "details": reasons or ["확인 가능한 우호 조건이 제한적"],
+        "details": details,
+        "trend_score": trend_score,
+        "relative_strength_score": rs_score,
+        "setup_score": setup_score,
+        "trading_status": trading_status,
+        "action_label": action_label,
+        "trend_checks": trend_checks,
         "metrics": {
-            "3개월 수익률": return63,
-            "6개월 수익률": return126,
+            "20일 수익률": return20,
+            "60일 수익률": return60,
+            "120일 수익률": return120,
             "12개월 수익률": return252,
+            "현재가": close,
+            "21EMA": ema21,
             "50일선": ma50,
-            "150일선": ma150,
             "200일선": ma200,
+            "21EMA 10거래일 변화": ema21_slope10,
+            "50일선 20거래일 변화": ma50_slope20,
             "200일선 20거래일 변화": ma200_slope20,
             "52주 고점 대비": distance_high252,
             "52주 저점 대비": distance_low252,
+            "52주 위치": high_position_label(distance_high252),
+            "Base 기간": base["base_days"],
+            "Base 깊이": base["base_depth_pct"],
+            "Pivot": pivot,
+            "Pivot 대비": pivot_distance,
+            "Buy Zone 하단": buy_low,
+            "Buy Zone 상단": buy_high,
+            "오늘 거래량": volume,
+            "20일 평균 거래량": avg_volume20,
+            "Volume Ratio": volume_ratio,
         },
     }
+
+
+def trend_checklist(
+    close: float,
+    ema21: float | None,
+    ma50: float | None,
+    ma200: float | None,
+    ema21_slope10: float | None,
+    ma50_slope20: float | None,
+    ma200_slope20: float | None,
+    distance_high252: float | None,
+) -> list[dict[str, Any]]:
+    return [
+        {"label": "가격 > 21EMA", "pass": bool(ema21 and close > ema21)},
+        {"label": "가격 > 50SMA", "pass": bool(ma50 and close > ma50)},
+        {"label": "가격 > 200SMA", "pass": bool(ma200 and close > ma200)},
+        {"label": "21EMA 상승", "pass": bool(ema21_slope10 is not None and ema21_slope10 > 0)},
+        {"label": "50SMA 상승", "pass": bool(ma50_slope20 is not None and ma50_slope20 > 0)},
+        {"label": "200SMA 상승", "pass": bool(ma200_slope20 is not None and ma200_slope20 > 0)},
+        {"label": "52주 고점 -15% 이내", "pass": bool(distance_high252 is not None and distance_high252 >= -15)},
+    ]
+
+
+def relative_strength_score(
+    return20: float,
+    return60: float,
+    return120: float,
+    distance_high252: float | None,
+) -> int:
+    score = 0
+    score += score_return_percentile_like(return20, [(8, 25), (4, 18), (0, 10), (-5, 5)])
+    score += score_return_percentile_like(return60, [(15, 30), (8, 22), (0, 12), (-8, 5)])
+    score += score_return_percentile_like(return120, [(25, 25), (12, 18), (0, 10), (-10, 5)])
+    if distance_high252 is None:
+        score += 8
+    elif distance_high252 >= -5:
+        score += 20
+    elif distance_high252 >= -15:
+        score += 14
+    elif distance_high252 >= -25:
+        score += 8
+    else:
+        score += 3
+    return min(score, 100)
+
+
+def score_return_percentile_like(value: float, bands: list[tuple[float, int]]) -> int:
+    for threshold, score in bands:
+        if value >= threshold:
+            return score
+    return 0
+
+
+def detect_trend_base(df: pd.DataFrame) -> dict[str, Any]:
+    base_days = 25
+    window = df.iloc[-base_days - 1 : -1]
+    if len(window) < base_days:
+        return {"base_exists": False, "base_days": base_days, "base_depth_pct": None, "pivot": None}
+
+    high = float(window["High"].max())
+    low = float(window["Low"].min())
+    close = float(df.iloc[-1]["Close"])
+    ma50 = float(df.iloc[-1]["ma50"]) if pd.notna(df.iloc[-1]["ma50"]) else None
+    depth = (high / low - 1) * 100 if low else None
+    upper_half = close >= low + (high - low) * 0.5
+    near_ma50 = ma50 is not None and close >= ma50 * 0.97
+    base_exists = bool(depth is not None and depth <= 15 and upper_half and near_ma50)
+    return {
+        "base_exists": base_exists,
+        "base_days": base_days,
+        "base_depth_pct": depth,
+        "pivot": high,
+    }
+
+
+def setup_quality_score(
+    base: dict[str, Any],
+    pivot_distance: float | None,
+    volume_ratio: float,
+) -> int:
+    score = 0
+    if base["base_exists"]:
+        score += 30
+    elif base["base_depth_pct"] is not None and base["base_depth_pct"] <= 20:
+        score += 15
+    if pivot_distance is not None:
+        if 0 <= pivot_distance <= 5:
+            score += 30
+        elif -5 <= pivot_distance < 0:
+            score += 24
+        elif 5 < pivot_distance <= 10:
+            score += 12
+        elif -10 <= pivot_distance < -5:
+            score += 10
+    if volume_ratio >= 1.4:
+        score += 25
+    elif volume_ratio >= 1.0:
+        score += 15
+    elif volume_ratio >= 0.8:
+        score += 8
+    if pivot_distance is not None and pivot_distance > 5:
+        score -= 15
+    return max(0, min(score, 100))
+
+
+def trend_trading_status(
+    *,
+    close: float,
+    ema21: float | None,
+    ma50: float | None,
+    pivot: float | None,
+    pivot_distance: float | None,
+    base_exists: bool,
+    volume_ratio: float,
+) -> tuple[str, str, str]:
+    if ma50 and close < ma50:
+        return "RISK_WARNING", "회복 대기", "50SMA 아래라 신규 매수보다 회복 확인이 먼저입니다."
+    if ema21 and close < ema21:
+        return "RISK_WARNING", "단기 방어", "21EMA 아래로 내려와 단기 추세 방어가 필요합니다."
+    if not base_exists or not pivot:
+        return "WATCH", "베이스 관찰", "추세는 확인하되 유효한 Base/Pivot이 부족해 관찰 구간입니다."
+    if pivot_distance is not None and pivot_distance > 5:
+        return "EXTENDED", "추격 금지", "Buy Zone을 넘어 신규 진입은 추격 위험이 큽니다."
+    if pivot_distance is not None and pivot_distance < 0:
+        return "WAIT", "피벗 접근 대기", "피벗 아래에 있어 돌파와 거래량 확인을 기다립니다."
+    if volume_ratio < 1.4:
+        return "WAIT", "거래량 확인", "가격은 피벗을 돌파했지만 거래량 확인이 부족합니다."
+    return "BUY", "매수 가능", "피벗 돌파와 거래량 확인이 함께 나온 정상 Buy Zone입니다."
+
+
+def trend_opinion_from_status(status: str, score: int) -> str:
+    if status == "BUY":
+        return "매수 우위"
+    if status in {"EXTENDED", "RISK_WARNING"}:
+        return "매도/방어" if score < 55 else "주의"
+    if status in {"WAIT", "WATCH"}:
+        return "중립/관망" if score >= 45 else "매도/방어"
+    return opinion_from_score(score)
+
+
+def high_position_label(distance_high252: float | None) -> str:
+    if distance_high252 is None:
+        return "확인 필요"
+    if distance_high252 >= -5:
+        return "신고가 접근"
+    if distance_high252 >= -15:
+        return "정상 조정"
+    if distance_high252 >= -25:
+        return "깊은 조정"
+    return "추세 훼손 가능성"
 
 
 def analyze_risk_signal(

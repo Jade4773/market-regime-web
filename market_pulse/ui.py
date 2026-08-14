@@ -21,7 +21,7 @@ TAB_LABELS = {
     "products": "상품 추천",
 }
 
-APP_VERSION = "etf-eligibility-split-v2-benchmark-label"
+APP_VERSION = "trend-oneil-v3"
 ELS_CACHE_VERSION = "els-score-top5-v1"
 
 
@@ -56,6 +56,12 @@ def format_trading_value(value: float | None, candidate: dict[str, Any]) -> str:
     if candidate.get("listing") == "국내상장 ETF":
         return f"{value / 100_000_000:,.1f}억원"
     return f"${value / 1_000_000:,.1f}M"
+
+
+def format_ratio(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.2f}배"
 
 
 def data_meta_text(item: dict[str, Any]) -> str:
@@ -284,10 +290,109 @@ def render_signal_jump_buttons(signals: dict[str, Any], key_prefix: str) -> None
             st.rerun()
 
 
+def render_trend_signal_card(item: dict[str, Any]) -> None:
+    signal = item["signals"]["trend"]
+    metrics = signal.get("metrics", {})
+    checks = signal.get("trend_checks", [])
+    passed_checks = sum(1 for check in checks if check.get("pass"))
+    checklist = "".join(
+        (
+            f'<li class="{"pass" if check.get("pass") else "fail"}">'
+            f'{"✓" if check.get("pass") else "•"} {escape(check["label"])}</li>'
+        )
+        for check in checks
+    )
+    pivot = metrics.get("Pivot")
+    buy_low = metrics.get("Buy Zone 하단")
+    buy_high = metrics.get("Buy Zone 상단")
+    volume_ratio = metrics.get("Volume Ratio")
+    action_label = signal.get("action_label", signal["opinion"])
+    status = signal.get("trading_status", "-")
+    action_style = badge_style(
+        "매도/방어" if status in {"EXTENDED", "RISK_WARNING"} else action_label
+    )
+    st.markdown(
+        f"""
+        <div class="market-card">
+          <div class="card-head">
+            <div>
+              <h3>{item["name"]}</h3>
+              <p>오닐식 추세/모멘텀 · {item.get("data_source", "Yahoo Finance")} · {item.get("data_status", "마감 기준")}</p>
+            </div>
+            <div class="badge-stack">
+              <span class="regime-badge" style="{action_style}">{action_label}</span>
+              <span class="source-badge">{status}</span>
+            </div>
+          </div>
+          <p class="explain">{signal["explanation"]}</p>
+          <div class="signal-row">
+            <span>종합 점수</span>
+            <div class="meter"><span style="width:{signal["score"]}%"></span></div>
+            <strong>{signal["score"]}</strong>
+          </div>
+          <div class="trend-score-grid">
+            <div class="trend-score-box"><span>Trend Score</span><strong>{signal.get("trend_score", 0)}</strong></div>
+            <div class="trend-score-box"><span>Relative Strength</span><strong>{signal.get("relative_strength_score", 0)}</strong></div>
+            <div class="trend-score-box"><span>Setup Score</span><strong>{signal.get("setup_score", 0)}</strong></div>
+          </div>
+          <div class="stat-grid">
+            <div><span>추세 체크</span><strong>{passed_checks}/{len(checks)}</strong></div>
+            <div><span>52주 위치</span><strong>{metrics.get("52주 위치", "-")}</strong></div>
+            <div><span>Volume Ratio</span><strong>{format_ratio(volume_ratio)}</strong></div>
+          </div>
+          <div class="ftd-line">
+            <span>21EMA / 50SMA / 200SMA</span>
+            <strong>{format_number(metrics.get("21EMA"))} / {format_number(metrics.get("50일선"))} / {format_number(metrics.get("200일선"))}</strong>
+          </div>
+          <div class="ftd-line">
+            <span>Pivot / Buy Zone</span>
+            <strong>{format_number(pivot)} · {format_number(buy_low)} ~ {format_number(buy_high)} · 피벗 대비 {format_pct(metrics.get("Pivot 대비"))}</strong>
+          </div>
+          <div class="reason-block">
+            <strong>O'Neil Trend Checklist</strong>
+            <ul class="check-list">{checklist}</ul>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption(" · ".join(signal.get("details", [])))
+    if metrics:
+        st.dataframe(
+            [
+                {"지표": name, "값": format_trend_metric(name, value)}
+                for name, value in metrics.items()
+            ],
+            hide_index=True,
+            use_container_width=True,
+        )
+
+
+def format_trend_metric(name: str, value: Any) -> str:
+    if value is None:
+        return "-"
+    if name == "Volume Ratio":
+        return format_ratio(value)
+    if isinstance(value, (int, float)) and any(
+        keyword in name
+        for keyword in ["수익률", "대비", "변화", "깊이"]
+    ):
+        return format_pct(value)
+    if isinstance(value, (int, float)) and "거래량" in name:
+        return format_number(value, 0)
+    if isinstance(value, (int, float)):
+        return format_number(value)
+    return str(value)
+
+
 def render_signal_card(item: dict[str, Any], signal_key: str) -> None:
     if item.get("error"):
         st.subheader(item["name"])
         st.error(item["error"])
+        return
+
+    if signal_key == "trend":
+        render_trend_signal_card(item)
         return
 
     signal = item["signals"][signal_key]
@@ -530,6 +635,46 @@ def dashboard() -> None:
             padding:0;
         }
         .reason-block ul:last-child { margin-bottom:0; }
+        .trend-score-grid {
+            display:grid;
+            grid-template-columns:repeat(3, minmax(0,1fr));
+            gap:10px;
+            margin-top:18px;
+        }
+        .trend-score-box {
+            border:1px solid #e2ebf7;
+            border-radius:8px;
+            padding:12px;
+            background:#fbfdff;
+            min-width:0;
+        }
+        .trend-score-box span {
+            display:block;
+            color:#8ba0bc;
+            font-size:12px;
+            margin-bottom:8px;
+        }
+        .trend-score-box strong {
+            display:block;
+            color:#172b4d;
+            font-size:21px;
+            line-height:1;
+        }
+        .check-list {
+            display:grid;
+            grid-template-columns:repeat(2, minmax(0,1fr));
+            gap:7px 12px;
+            margin:10px 0 0;
+            padding:0;
+            list-style:none;
+        }
+        .check-list li {
+            color:#6f87a8;
+            font-size:12px;
+            line-height:1.35;
+        }
+        .check-list li.pass { color:#1b64da; font-weight:800; }
+        .check-list li.fail { color:#d92d35; }
         .opinion-list { display:grid; gap:0; margin-top:18px; }
         .opinion-list a {
             display:flex;
@@ -563,6 +708,8 @@ def dashboard() -> None:
             .market-card { padding:18px; }
             .badge-stack { align-items:flex-start; }
             .price-row strong { font-size:29px; }
+            .trend-score-grid { grid-template-columns:1fr; }
+            .check-list { grid-template-columns:1fr; }
             .tab-menu { width:100%; border-radius:16px; }
             .tab-menu a { flex:1 1 45%; }
         }
@@ -686,7 +833,7 @@ def render_overview_guide() -> None:
             **개요 탭은 세 가지 관점의 의견을 합산해 최종 의견을 냅니다.**
 
             - **윌리엄 오닐:** 팔로우쓰루데이, 분산일, 스톨링, 랠리 실패 여부를 봅니다.
-            - **추세/모멘텀:** 50·150·200일선 배열, 200일선 방향, 3개월·6개월 수익률, 52주 위치를 봅니다.
+            - **추세/모멘텀:** 21EMA·50SMA·200SMA, 상대강도, Base/Pivot, Buy Zone, Volume Ratio를 봅니다.
             - **리스크 점검:** RSI, 50일선 이격도, 분산일 누적과 집중 여부를 봅니다.
 
             각 관점은 0~100점으로 계산되고, 지수별 **종합 점수**는 세 관점 점수의 평균입니다.
@@ -769,12 +916,47 @@ def render_region_summary(summary: dict[str, Any]) -> None:
             )
 
 
+def render_trend_tab_summary(items: list[dict[str, Any]]) -> None:
+    signals = [
+        item["signals"]["trend"]
+        for item in items
+        if not item.get("error") and "trend" in item.get("signals", {})
+    ]
+    statuses = [signal.get("trading_status") for signal in signals]
+    buy_count = statuses.count("BUY")
+    risk_count = sum(status in {"EXTENDED", "RISK_WARNING"} for status in statuses)
+    wait_count = sum(status in {"WAIT", "WATCH"} for status in statuses)
+    if buy_count:
+        title = "정상 Buy Zone 후보 확인"
+        tone = "positive"
+        copy = f"{buy_count}개 지수에서 피벗 돌파와 거래량 확인이 함께 나왔습니다."
+    elif risk_count:
+        title = "방어 또는 추격금지 우선"
+        tone = "negative"
+        copy = f"{risk_count}개 지수에서 21EMA/50SMA 이탈 또는 과도한 확장 신호가 있습니다."
+    else:
+        title = "대기/관찰 우선"
+        tone = "neutral"
+        copy = f"{wait_count}개 지수가 피벗, 베이스 또는 거래량 확인을 기다리는 구간입니다."
+    st.markdown(
+        f"""
+        <div class="summary-card">
+          <div class="summary-label">오닐식 추세/모멘텀 요약</div>
+          <div class="summary-title {tone}">{title}</div>
+          <p class="summary-copy">{copy}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_signal_tab(items: list[dict[str, Any]], signal_key: str, title: str) -> None:
     st.markdown(f'<div class="section-title">{title}</div>', unsafe_allow_html=True)
     if signal_key == "trend":
+        render_trend_tab_summary(items)
         st.info(
-            "새 추세/모멘텀 기준: 50·150·200일선 추세 템플릿, 200일선 방향, "
-            "3개월·6개월 수익률, 52주 고점·저점 대비 위치를 함께 봅니다."
+            "오닐식 추세/모멘텀 기준: 21EMA·50SMA·200SMA, 상대강도, Base/Pivot, "
+            "Buy Zone, Volume Ratio를 분리해서 현재 매수 가능한 위치인지 판단합니다."
         )
     for row_start in range(0, len(items), 2):
         cols = st.columns(2)
@@ -1100,65 +1282,76 @@ def render_product_guide() -> None:
 def render_trend_scoring_guide() -> None:
     st.markdown(
         """
-        이 탭은 **Minervini식 추세 템플릿**과 **IBD식 상대강도 사고방식**을 지수 판단용으로 단순화한 보조 모델입니다.
-        개별 종목 선별 공식이 아니라, 지수의 추세가 얼마나 건강한지 0~100점으로 요약합니다.
+        이 탭은 **William O'Neil / CAN SLIM의 M(시장 방향), 상대강도, 피벗 돌파, 거래량 확인**을
+        지수 판단용으로 단순화한 보조 모델입니다. 핵심은 점수와 행동을 분리하는 것입니다.
+        점수가 높아도 피벗·거래량·매수구간이 맞지 않으면 바로 매수 가능으로 표시하지 않습니다.
+
+        **최종 점수 산식**
+
+        `종합 점수 = Trend Score × 45% + Relative Strength Score × 30% + Setup Score × 25%`
         """
     )
     st.dataframe(
         [
             {
-                "구분": "추세 위치",
-                "조건": "현재 지수가 50일선 위",
-                "점수": "15점",
-                "해석": "단기와 중기 사이의 가격 흐름이 살아 있다고 봅니다.",
+                "구분": "Trend Score",
+                "조건": "가격 > 21EMA",
+                "점수": "체크 1개",
+                "해석": "단기 추세가 살아 있는지 봅니다.",
             },
             {
-                "구분": "추세 위치",
-                "조건": "현재 지수가 150일선 위",
-                "점수": "15점",
-                "해석": "중기 추세가 훼손되지 않았는지 확인합니다.",
+                "구분": "Trend Score",
+                "조건": "가격 > 50SMA",
+                "점수": "체크 1개",
+                "해석": "오닐식 매수 후보에서 가장 중요한 중기 추세 필터입니다.",
             },
             {
-                "구분": "추세 위치",
-                "조건": "현재 지수가 200일선 위",
-                "점수": "15점",
-                "해석": "장기 상승 추세 안에 있는지 확인합니다.",
+                "구분": "Trend Score",
+                "조건": "가격 > 200SMA",
+                "점수": "체크 1개",
+                "해석": "장기 하락 추세 안의 반등인지 아닌지 확인합니다.",
             },
             {
-                "구분": "이동평균 배열",
-                "조건": "50일선 > 150일선 > 200일선",
-                "점수": "15점",
-                "해석": "단기 평균이 중기와 장기 평균보다 높아 상승 배열로 봅니다.",
+                "구분": "Trend Score",
+                "조건": "21EMA·50SMA·200SMA가 각각 상승",
+                "점수": "체크 3개",
+                "해석": "가격만 위에 있는지보다 이동평균 자체의 방향을 더 중요하게 봅니다.",
             },
             {
-                "구분": "장기 추세 방향",
-                "조건": "200일선이 20거래일 전보다 상승",
-                "점수": "10점",
-                "해석": "장기 추세선 자체가 위로 기울고 있는지 봅니다.",
-            },
-            {
-                "구분": "상대강도/모멘텀",
-                "조건": "3개월 수익률 플러스",
-                "점수": "10점",
-                "해석": "최근 분기의 상승 탄력이 살아 있는지 봅니다.",
-            },
-            {
-                "구분": "상대강도/모멘텀",
-                "조건": "6개월 수익률 플러스",
-                "점수": "10점",
-                "해석": "반년 단위의 중기 모멘텀이 양호한지 봅니다.",
-            },
-            {
-                "구분": "52주 위치",
+                "구분": "Trend Score",
                 "조건": "52주 고점 대비 -15% 이내",
-                "점수": "5점",
-                "해석": "고점에서 너무 깊게 밀리지 않았는지 봅니다.",
+                "점수": "체크 1개",
+                "해석": "주도 지수는 보통 신고가권 근처에서 힘이 확인됩니다.",
             },
             {
-                "구분": "52주 위치",
-                "조건": "52주 저점 대비 +20% 이상",
-                "점수": "5점",
-                "해석": "저점권을 벗어나 충분히 회복했는지 봅니다.",
+                "구분": "Relative Strength",
+                "조건": "20·60·120거래일 수익률",
+                "점수": "최대 80점",
+                "해석": "짧은 모멘텀, 중기 모멘텀, 반년 흐름을 함께 봅니다.",
+            },
+            {
+                "구분": "Relative Strength",
+                "조건": "52주 고점 근접도",
+                "점수": "최대 20점",
+                "해석": "고점에 가까울수록 상대적으로 강한 지수로 봅니다.",
+            },
+            {
+                "구분": "Setup Score",
+                "조건": "25거래일 Base 깊이와 위치",
+                "점수": "최대 30점",
+                "해석": "너무 깊지 않고 상단부에서 정리되는지 봅니다.",
+            },
+            {
+                "구분": "Setup Score",
+                "조건": "Pivot 대비 현재 위치",
+                "점수": "최대 30점",
+                "해석": "피벗 아래 접근, 피벗 돌파, +5% 이내 Buy Zone을 구분합니다.",
+            },
+            {
+                "구분": "Setup Score",
+                "조건": "Volume Ratio",
+                "점수": "최대 25점",
+                "해석": "오늘 거래량이 20일 평균 대비 얼마나 강한지 봅니다. 1.4배 이상을 강한 확인으로 봅니다.",
             },
         ],
         hide_index=True,
@@ -1166,16 +1359,25 @@ def render_trend_scoring_guide() -> None:
     )
     st.markdown(
         """
-        **판정 구간**
+        **Action 판정**
 
-        - **매수 우위:** 65점 이상. 추세 배열과 모멘텀이 대체로 우호적입니다.
-        - **중립/관망:** 45점 이상 65점 미만. 일부 조건은 좋지만 아직 확신하기 어렵습니다.
-        - **매도/방어:** 45점 미만. 주요 이동평균 또는 중기 모멘텀이 약해 방어적으로 봅니다.
+        - **매수 가능:** 가격이 피벗을 돌파했고, 피벗~피벗+5% Buy Zone 안이며, Volume Ratio가 1.4배 이상입니다.
+        - **거래량 확인:** 가격은 피벗을 돌파했지만 거래량 확인이 부족합니다.
+        - **피벗 접근 대기:** 피벗 아래에 있어 돌파 확인을 기다립니다.
+        - **베이스 관찰:** 추세는 나쁘지 않지만 유효한 Base/Pivot이 부족합니다.
+        - **추격 금지:** 피벗 대비 +5%를 넘어 신규 진입에는 늦었다고 봅니다.
+        - **단기 방어/회복 대기:** 21EMA 또는 50SMA 아래로 내려와 신규 매수보다 방어와 회복 확인이 먼저입니다.
 
-        이 점수는 윌리엄 오닐 탭의 팔로우쓰루데이/분산일 판정을 대체하지 않고, **추세와 상대강도 관점의 보조 의견**으로 사용합니다.
+        **수익률 계산**
+
+        20·60·120·252거래일 수익률은 `현재가 / 과거가 - 1`에 100을 곱한 값입니다.
+        이미 퍼센트 단위로 계산하기 때문에 화면에서 한 번 더 100을 곱하지 않습니다.
+
+        이 탭은 윌리엄 오닐 탭의 팔로우쓰루데이/분산일 판정을 대체하지 않고,
+        **현재 지수가 매수 가능한 위치인지**를 보조적으로 확인하는 용도입니다.
         """
     )
-    st.caption("앱 버전: trend-v2-score-guide")
+    st.caption("앱 버전: trend-oneil-v3")
 
 
 def render_risk_scoring_guide() -> None:
