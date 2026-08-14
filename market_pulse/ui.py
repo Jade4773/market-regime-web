@@ -17,8 +17,8 @@ TAB_LABELS = {
     "overview": "개요",
     "oneil": "FTD/분산일 확인",
     "trend": "추세/모멘텀",
-    "risk": "보유/매도",
     "products": "상품 추천",
+    "risk": "보유/매도",
 }
 
 APP_VERSION = "holding-sell-v1"
