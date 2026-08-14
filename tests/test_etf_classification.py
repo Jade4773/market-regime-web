@@ -6,6 +6,8 @@ from market_pulse.products import (
     ETF_VOLUME_THRESHOLD,
     build_holding_review,
     classify_etf_candidate,
+    infer_category_from_text,
+    infer_etf_category,
 )
 
 
@@ -182,6 +184,13 @@ class EtfClassificationTest(unittest.TestCase):
         )
 
         self.assertEqual(review["action_label"], "보유 유지")
+
+    def test_korean_software_ai_etf_is_sector_category(self):
+        self.assertEqual(infer_category_from_text("SOL 미국AI소프트웨어"), "sector")
+        self.assertEqual(
+            infer_etf_category({"index": "ETF", "note": "미국 AI 소프트웨어 테마", "ticker": "481180"}),
+            "sector",
+        )
 
 
 if __name__ == "__main__":

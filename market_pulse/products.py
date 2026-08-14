@@ -58,7 +58,7 @@ INDEX_KEYWORDS = [
 ]
 
 KIS_MASTER_BASE_URL = "https://new.real.download.dws.co.kr/common/master"
-ETF_SCREENER_VERSION = "kis-universe-v5-exit-strategy"
+ETF_SCREENER_VERSION = "kis-universe-v6-exit-category"
 ETF_SCREEN_CACHE_SECONDS = configured_cache_seconds("ETF_SCREEN_CACHE_SECONDS")
 ETF_PRELIMINARY_LIMIT = int(os.getenv("ETF_PRELIMINARY_LIMIT", "180"))
 ETF_FULL_ANALYSIS_LIMIT = int(os.getenv("ETF_FULL_ANALYSIS_LIMIT", "40"))
@@ -540,7 +540,29 @@ def infer_category_from_text(text: str) -> str:
     upper = text.upper()
     if any(term in upper for term in ["채권", "BOND", "TREASURY", "국고", "회사채", "CLO", "머니", "CD금리"]):
         return "bond"
-    if any(term in upper for term in ["SEMICONDUCTOR", "SOFTWARE", "TECH", "반도체", "2차전지", "바이오", "은행"]):
+    if any(
+        term in upper
+        for term in [
+            "SEMICONDUCTOR",
+            "SOFTWARE",
+            "TECH",
+            "AI",
+            "CLOUD",
+            "DATA CENTER",
+            "반도체",
+            "2차전지",
+            "바이오",
+            "은행",
+            "소프트웨어",
+            "인공지능",
+            "클라우드",
+            "데이터센터",
+            "테크",
+            "로봇",
+            "게임",
+            "헬스케어",
+        ]
+    ):
         return "sector"
     if any(term in upper for term in ["MSCI", "JAPAN", "INDIA", "TAIWAN", "CHINA", "KOREA", "일본", "인도", "대만", "중국"]):
         return "country"
@@ -3163,6 +3185,10 @@ def infer_etf_category(candidate: dict[str, Any]) -> str:
         "semiconductor",
         "software",
         "technology",
+        "tech",
+        "ai",
+        "cloud",
+        "data center",
         "communication",
         "consumer",
         "financial",
@@ -3171,6 +3197,14 @@ def infer_etf_category(candidate: dict[str, Any]) -> str:
         "health",
         "반도체",
         "2차전지",
+        "소프트웨어",
+        "인공지능",
+        "클라우드",
+        "데이터센터",
+        "테크",
+        "로봇",
+        "게임",
+        "헬스케어",
         "섹터",
         "테마",
     ]
