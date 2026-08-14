@@ -15,7 +15,7 @@ from market_pulse.products import (
 
 TAB_LABELS = {
     "overview": "개요",
-    "oneil": "FTD, 분산일 모니터링",
+    "oneil": "FTD/분산일 확인",
     "trend": "추세/모멘텀",
     "risk": "리스크 점검",
     "products": "상품 추천",
@@ -276,7 +276,7 @@ def render_consensus_card(item: dict[str, Any]) -> None:
 def render_signal_jump_buttons(signals: dict[str, Any], key_prefix: str) -> None:
     st.caption("관점별 의견을 누르면 해당 탭으로 이동합니다.")
     for signal_key, label in [
-        ("oneil", "FTD, 분산일 모니터링"),
+        ("oneil", "FTD/분산일 확인"),
         ("trend", "추세/모멘텀"),
         ("risk", "리스크 점검"),
     ]:
@@ -832,7 +832,7 @@ def render_overview_guide() -> None:
             """
             **개요 탭은 세 가지 관점의 의견을 합산해 최종 의견을 냅니다.**
 
-            - **FTD, 분산일 모니터링:** 팔로우쓰루데이, 분산일, 스톨링, 랠리 실패 여부를 봅니다.
+            - **FTD/분산일 확인:** 팔로우쓰루데이, 분산일, 스톨링, 랠리 실패 여부를 봅니다.
             - **추세/모멘텀:** 21EMA·50SMA·200SMA, 상대강도, Base/Pivot, Buy Zone, Volume Ratio를 봅니다.
             - **리스크 점검:** RSI, 50일선 이격도, 분산일 누적과 집중 여부를 봅니다.
 
@@ -875,7 +875,7 @@ def render_oneil_tab(snapshot: dict[str, Any]) -> None:
     st.markdown(
         f"""
         <div class="summary-card">
-          <div class="summary-label">FTD, 분산일 모니터링</div>
+          <div class="summary-label">FTD/분산일 확인</div>
           <div class="summary-title {regime_tone(summary['regime'])}">{summary["regime"]}</div>
           <p class="summary-copy">{summary["explanation"]}</p>
         </div>
@@ -1373,7 +1373,7 @@ def render_trend_scoring_guide() -> None:
         20·60·120·252거래일 수익률은 `현재가 / 과거가 - 1`에 100을 곱한 값입니다.
         이미 퍼센트 단위로 계산하기 때문에 화면에서 한 번 더 100을 곱하지 않습니다.
 
-        이 탭은 FTD, 분산일 모니터링 탭의 팔로우쓰루데이/분산일 판정을 대체하지 않고,
+        이 탭은 FTD/분산일 확인 탭의 팔로우쓰루데이/분산일 판정을 대체하지 않고,
         **현재 지수가 매수 가능한 위치인지**를 보조적으로 확인하는 용도입니다.
         """
     )
