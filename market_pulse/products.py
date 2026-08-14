@@ -1846,6 +1846,7 @@ def summarize_market_gate(label: str, gate: dict[str, Any] | None) -> dict[str, 
     if not gate:
         return {
             "label": label,
+            "benchmark": "-",
             "state": "MARKET_CORRECTION",
             "state_label": "관망",
             "ftd": "-",
@@ -1858,6 +1859,7 @@ def summarize_market_gate(label: str, gate: dict[str, Any] | None) -> dict[str, 
     follow_through = item.get("follow_through") or {}
     return {
         "label": label,
+        "benchmark": item.get("name", "-"),
         "state": gate["state"],
         "state_label": gate["state_label"],
         "ftd": follow_through.get("date", "최근 FTD 없음"),

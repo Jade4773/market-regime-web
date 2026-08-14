@@ -21,7 +21,7 @@ TAB_LABELS = {
     "products": "상품 추천",
 }
 
-APP_VERSION = "etf-eligibility-split-v1"
+APP_VERSION = "etf-eligibility-split-v2-benchmark-label"
 ELS_CACHE_VERSION = "els-score-top5-v1"
 
 
@@ -432,6 +432,7 @@ def dashboard() -> None:
         }
         .region-top { display:flex; justify-content:space-between; gap:12px; align-items:center; }
         .region-name { color:#6f87a8; font-size:14px; font-weight:700; }
+        .region-benchmark { color:#28466f; font-size:18px; font-weight:800; margin-top:9px; }
         .region-regime { color:#172b4d; font-size:22px; font-weight:800; margin:10px 0 7px; }
         .region-regime.neutral { color:#4d6f9d; }
         .region-regime.caution, .region-regime.negative { color:#d92d35; }
@@ -906,6 +907,7 @@ def render_etf_market_status(snapshot: dict[str, Any]) -> None:
                     <span class="region-name">{summary["label"]}</span>
                     <span class="regime-badge" style="{badge_style(summary["state_label"])}">{summary["state_label"]}</span>
                   </div>
+                  <div class="region-benchmark">기준지수: {summary["benchmark"]}</div>
                   <div class="stat-grid">
                     <div><span>Last FTD</span><strong>{summary["ftd"]}</strong></div>
                     <div><span>분산일</span><strong>{summary["distribution_count"]}</strong></div>
