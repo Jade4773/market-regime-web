@@ -274,20 +274,26 @@ def render_consensus_card(item: dict[str, Any]) -> None:
 
 
 def render_signal_jump_buttons(signals: dict[str, Any], key_prefix: str) -> None:
-    st.caption("관점별 의견을 누르면 해당 탭으로 이동합니다.")
+    st.caption("관점별 상태를 누르면 해당 탭으로 이동합니다.")
     for signal_key, label in [
         ("oneil", "FTD/분산일 확인"),
         ("trend", "추세/모멘텀"),
         ("risk", "리스크 점검"),
     ]:
-        opinion = signals[signal_key]["opinion"]
+        display_value = signal_jump_display_value(signal_key, signals[signal_key])
         if st.button(
-            f"{label}  ·  {opinion}",
+            f"{label}  ·  {display_value}",
             key=f"jump_{key_prefix}_{signal_key}",
             use_container_width=True,
         ):
             set_active_tab(signal_key)
             st.rerun()
+
+
+def signal_jump_display_value(signal_key: str, signal: dict[str, Any]) -> str:
+    if signal_key == "trend":
+        return signal.get("action_label") or signal.get("opinion", "-")
+    return signal.get("opinion", "-")
 
 
 def render_trend_signal_card(item: dict[str, Any]) -> None:
