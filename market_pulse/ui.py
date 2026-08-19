@@ -35,7 +35,7 @@ TAB_LABELS = {
     "risk": "보유/매도",
 }
 
-APP_VERSION = "holding-exit-v2"
+APP_VERSION = "holding-exit-v2-cache-1h"
 ELS_CACHE_VERSION = "els-score-top5-v1"
 
 

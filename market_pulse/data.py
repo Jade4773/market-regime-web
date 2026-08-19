@@ -15,7 +15,7 @@ from market_pulse.rules import analyze_index
 
 
 SNAPSHOT_SCHEMA_VERSION = 18
-DEFAULT_CACHE_SECONDS = 3 * 60 * 60
+DEFAULT_CACHE_SECONDS = 60 * 60
 
 
 INDEXES = {
