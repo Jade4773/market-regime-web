@@ -37,6 +37,7 @@ TAB_LABELS = {
 
 APP_VERSION = "holding-exit-v2-cache-1h"
 ELS_CACHE_VERSION = "els-score-top5-v1"
+ELS_FRONT_COLUMNS = ["ELS 점수", "상품명", "쿠폰", "기초자산"]
 
 
 @st.cache_data(ttl=DEFAULT_CACHE_SECONDS, show_spinner=False)
@@ -62,6 +63,15 @@ def format_cache_duration(seconds: int) -> str:
     if seconds % 60 == 0:
         return f"{seconds // 60}분"
     return f"{seconds}초"
+
+
+def prioritize_els_columns(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    prioritized = []
+    for item in items:
+        ordered = {key: item[key] for key in ELS_FRONT_COLUMNS if key in item}
+        ordered.update({key: value for key, value in item.items() if key not in ordered})
+        prioritized.append(ordered)
+    return prioritized
 
 
 def format_trading_value(value: float | None, candidate: dict[str, Any]) -> str:
@@ -1256,7 +1266,7 @@ def render_els_products_section() -> None:
         st.caption(f"{els.get('status', '공개 비교공시 기준')} · 점수 상위 {len(items)}개만 표시")
         if els.get("issuer_summary"):
             st.caption(f"후보군 증권사별: {els['issuer_summary']}")
-        st.dataframe(items, hide_index=True, use_container_width=True)
+        st.dataframe(prioritize_els_columns(items), hide_index=True, use_container_width=True)
     else:
         st.info(
             "자동으로 판독 가능한 지수형 ELS 청약 상품이 없습니다. "
