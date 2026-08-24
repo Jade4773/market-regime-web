@@ -1345,8 +1345,8 @@ def score_els_product(product: dict[str, str]) -> dict[str, str]:
         "주의 요인": " · ".join(warnings) if warnings else "특이 위험 요인 제한적",
         **product,
         "상세 점수": (
-            f"방어 {protection_score:.1f}/35 · 기초자산 {underlying_score:.1f}/20 · "
-            f"쿠폰 {coupon_score:.1f}/20 · 신용 {issuer_score:.1f}/15 · 기간 {term_score:.1f}/10"
+            f"방어 {protection_score:.1f}/30 · 기초자산 {underlying_score:.1f}/20 · "
+            f"쿠폰 {coupon_score:.1f}/25 · 신용 {issuer_score:.1f}/15 · 기간 {term_score:.1f}/10"
         ),
     }
 
@@ -1435,53 +1435,50 @@ def score_els_protection(
     no_knock_in: bool,
 ) -> tuple[float, str]:
     if final_barrier is None:
-        final_score = 6
+        final_score = 5
         final_note = "만기상환 배리어 확인 필요"
     elif final_barrier <= 50:
-        final_score = 14
-        final_note = f"만기상환 기준 {final_barrier:g}%"
-    elif final_barrier <= 55:
         final_score = 12
         final_note = f"만기상환 기준 {final_barrier:g}%"
-    elif final_barrier <= 60:
+    elif final_barrier <= 55:
         final_score = 10
         final_note = f"만기상환 기준 {final_barrier:g}%"
-    elif final_barrier <= 65:
+    elif final_barrier <= 60:
         final_score = 8
         final_note = f"만기상환 기준 {final_barrier:g}%"
+    elif final_barrier <= 65:
+        final_score = 6
+        final_note = f"만기상환 기준 {final_barrier:g}%"
     else:
-        final_score = 5
+        final_score = 4
         final_note = f"만기상환 기준 {final_barrier:g}%"
 
     if no_knock_in:
-        knock_score = 12
+        knock_score = 10
         knock_note = "노낙인 구조"
     elif knock_in is None:
-        knock_score = 5
+        knock_score = 4
         knock_note = "낙인 조건 확인 필요"
-    elif knock_in <= 35:
-        knock_score = 10
-        knock_note = f"낙인 {knock_in:g}%"
     elif knock_in <= 40:
         knock_score = 8
         knock_note = f"낙인 {knock_in:g}%"
     elif knock_in <= 45:
-        knock_score = 6
+        knock_score = 5
         knock_note = f"낙인 {knock_in:g}%"
     else:
-        knock_score = 4
+        knock_score = 3
         knock_note = f"낙인 {knock_in:g}%"
 
     if avg_barrier is None:
-        early_score = 4
-    elif avg_barrier <= 75:
-        early_score = 9
-    elif avg_barrier <= 80:
-        early_score = 7
-    elif avg_barrier <= 85:
-        early_score = 5
-    else:
         early_score = 3
+    elif avg_barrier <= 75:
+        early_score = 8
+    elif avg_barrier <= 80:
+        early_score = 6
+    elif avg_barrier <= 85:
+        early_score = 4
+    else:
+        early_score = 2
 
     return final_score + knock_score + early_score, f"{final_note}, {knock_note}"
 
@@ -1517,16 +1514,16 @@ def score_els_coupon(coupon: float) -> tuple[float, str]:
     if coupon < 8:
         score = 8
     elif coupon < 12:
-        score = 13
+        score = 13 + (coupon - 8)
     elif coupon < 18:
-        score = 18
+        score = 18 + ((coupon - 12) * 7 / 6)
     elif coupon <= 24:
-        score = 20
+        score = 25
     elif coupon <= 30:
-        score = 16
+        score = 20
     else:
-        score = 12
-    return score, f"쿠폰 연 {coupon:g}%"
+        score = 15
+    return round(score, 1), f"쿠폰 연 {coupon:g}%"
 
 
 def score_els_issuer(rating: str) -> tuple[float, str]:
