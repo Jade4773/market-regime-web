@@ -60,7 +60,7 @@ INDEX_KEYWORDS = [
 ]
 
 KIS_MASTER_BASE_URL = "https://new.real.download.dws.co.kr/common/master"
-ETF_SCREENER_VERSION = "kis-universe-v6-exit-category"
+ETF_SCREENER_VERSION = "kis-universe-v7-tracked-market"
 ETF_SCREEN_CACHE_SECONDS = configured_cache_seconds("ETF_SCREEN_CACHE_SECONDS")
 ETF_PRELIMINARY_LIMIT = int(os.getenv("ETF_PRELIMINARY_LIMIT", "180"))
 ETF_FULL_ANALYSIS_LIMIT = int(os.getenv("ETF_FULL_ANALYSIS_LIMIT", "40"))
@@ -91,6 +91,7 @@ ETF_BUY_READY_LIMIT = int(os.getenv("ETF_BUY_READY_LIMIT", "5"))
 ETF_WATCHLIST_LIMIT = int(os.getenv("ETF_WATCHLIST_LIMIT", "2"))
 ETF_HOLDING_LOOKBACK_SESSIONS = int(os.getenv("ETF_HOLDING_LOOKBACK_SESSIONS", "40"))
 ETF_HOLDING_DISPLAY_LIMIT = int(os.getenv("ETF_HOLDING_DISPLAY_LIMIT", "12"))
+ETF_TRACKED_COUNTRIES = {"대한민국", "미국"}
 ELS_TOP_LIMIT = int(os.getenv("ELS_TOP_LIMIT", "5"))
 ELS_MAX_PER_ISSUER = int(os.getenv("ELS_MAX_PER_ISSUER", "2"))
 ELS_DETAIL_TIMEOUT_SECONDS = float(os.getenv("ELS_DETAIL_TIMEOUT_SECONDS", "6"))
@@ -342,9 +343,9 @@ def build_etf_screen_universe() -> list[dict[str, Any]]:
     except Exception:
         candidates.extend([item for item in ETF_CANDIDATES if item["listing"] == "미국상장 ETF"])
 
-    unique = dedupe_etf_candidates(candidates)
+    unique = select_tracked_market_etfs(dedupe_etf_candidates(candidates))
     if not unique:
-        unique = ETF_CANDIDATES
+        unique = select_tracked_market_etfs(ETF_CANDIDATES)
 
     _ETF_UNIVERSE_CACHE["items"] = unique
     _ETF_UNIVERSE_CACHE["created_at"] = now
@@ -372,15 +373,16 @@ def fetch_kis_domestic_etf_universe() -> list[dict[str, Any]]:
             continue
 
         prev_volume = int_or_zero(details.get("전일거래량"))
+        country = infer_investment_country(name)
         candidates.append(
             etf_candidate(
-                market_group=domestic_market_group(name),
-                signal_key=domestic_signal_key(name),
+                market_group=tracked_market_group(country, name),
+                signal_key=tracked_signal_key(name, country),
                 listing="국내상장 ETF",
                 ticker=code,
                 yahoo_ticker=f"{code}.KS",
                 name=name,
-                country=infer_investment_country(name),
+                country=country,
                 index=infer_index_label(name),
                 note="한국투자증권 국내 ETF 마스터 기준",
                 min_avg_volume=max(1000, min(prev_volume, 100000)),
@@ -414,15 +416,16 @@ def fetch_kis_overseas_etf_universe() -> list[dict[str, Any]]:
             name = english_name or korean_name or symbol
             if not symbol or is_excluded_etf_name(f"{symbol} {korean_name} {english_name}"):
                 continue
+            country = infer_investment_country(f"{korean_name} {english_name}")
             candidates.append(
                 etf_candidate(
-                    market_group="us",
-                    signal_key=overseas_signal_key(name),
+                    market_group=tracked_market_group(country, name),
+                    signal_key=tracked_signal_key(name, country),
                     listing="미국상장 ETF",
                     ticker=symbol,
                     yahoo_ticker=symbol,
                     name=name,
-                    country=infer_investment_country(f"{korean_name} {english_name}"),
+                    country=country,
                     index=infer_index_label(f"{korean_name} {english_name}"),
                     note="한국투자증권 해외 ETF 마스터 기준",
                     min_avg_volume=20000,
@@ -462,9 +465,60 @@ def dedupe_etf_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, An
     return unique
 
 
+def select_tracked_market_etfs(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [candidate for candidate in candidates if is_tracked_market_etf(candidate)]
+
+
+def is_tracked_market_etf(candidate: dict[str, Any]) -> bool:
+    return candidate.get("country") in ETF_TRACKED_COUNTRIES
+
+
 def is_excluded_etf_name(text: str) -> bool:
     upper = text.upper()
     return any(term.upper() in upper for term in EXCLUDED_ETF_TERMS)
+
+
+def tracked_market_group(country: str, name: str = "") -> str:
+    if country == "대한민국":
+        return "korea"
+    if country == "미국":
+        return "us"
+    return "other"
+
+
+def tracked_signal_key(name: str, country: str) -> str:
+    if country == "대한민국":
+        return korea_signal_key(name)
+    if country == "미국":
+        return us_signal_key(name)
+    return "sp500"
+
+
+def korea_signal_key(name: str) -> str:
+    upper = name.upper()
+    if "200" in upper and "KOSDAQ" not in upper and "코스닥" not in name:
+        return "kospi200"
+    return "kospi"
+
+
+def us_signal_key(name: str) -> str:
+    upper = name.upper()
+    if any(
+        term in upper
+        for term in [
+            "NASDAQ",
+            "나스닥",
+            "SEMICONDUCTOR",
+            "SOFTWARE",
+            "TECH",
+            "반도체",
+            "소프트웨어",
+            "AI",
+            "인공지능",
+        ]
+    ):
+        return "nasdaq_composite"
+    return "sp500"
 
 
 def domestic_market_group(name: str) -> str:
@@ -494,6 +548,8 @@ def overseas_signal_key(name: str) -> str:
 
 def infer_investment_country(text: str) -> str:
     upper = text.upper()
+    if "미국" in text or re.search(r"\b(U\.S\.|US|USA|UNITED STATES|S&P|NASDAQ|DOW|RUSSELL)\b", upper):
+        return "미국"
     for keyword, country in [
         ("KOREA", "대한민국"),
         ("한국", "대한민국"),
@@ -507,17 +563,17 @@ def infer_investment_country(text: str) -> str:
         ("중국", "중국"),
         ("MEXICO", "멕시코"),
         ("멕시코", "멕시코"),
+        ("COLOMBIA", "콜롬비아"),
+        ("콜롬비아", "콜롬비아"),
         ("EUROPE", "유럽"),
         ("유럽", "유럽"),
-        ("GLOBAL", "글로벌"),
         ("글로벌", "글로벌"),
-        ("US ", "미국"),
-        ("USA", "미국"),
-        ("미국", "미국"),
     ]:
         if keyword in upper:
             return country
-    return "미국" if re.search(r"\b(S&P|NASDAQ|DOW|RUSSELL)\b", upper) else "글로벌"
+    if re.search(r"\b(KODEX|TIGER|ACE|KBSTAR|SOL|HANARO|KOSEF|ARIRANG|TIMEFOLIO|RISE)\b", upper):
+        return "대한민국"
+    return "글로벌"
 
 
 def infer_index_label(text: str) -> str:
@@ -1862,7 +1918,7 @@ def rank_preliminary_etf_universe(universe: list[dict[str, Any]]) -> list[dict[s
         scored.append(item)
 
     if not scored:
-        return ETF_CANDIDATES
+        return select_tracked_market_etfs(ETF_CANDIDATES)
 
     assign_preliminary_percentiles(scored)
     return sorted(
@@ -1890,6 +1946,8 @@ def select_screenable_etf_universe(universe: list[dict[str, Any]]) -> list[dict[
 def is_screenable_equity_etf(candidate: dict[str, Any]) -> bool:
     text = f"{candidate.get('ticker', '')} {candidate.get('name', '')} {candidate.get('korean_name', '')}"
     upper = text.upper()
+    if not is_tracked_market_etf(candidate):
+        return False
     if any(term.upper() in upper for term in NON_EQUITY_ETF_TERMS):
         return False
     if candidate.get("category") == "bond":

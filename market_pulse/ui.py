@@ -1302,7 +1302,7 @@ def render_etf_recommendation_section(snapshot: dict[str, Any]) -> None:
         st.caption(
             f"검토 범위: {summary.get('universe_source', 'ETF universe')} "
             f"{summary.get('universe_count', 0):,}개 중 "
-            f"주식형·유동성 필터 {summary.get('screenable_count', 0):,}개, "
+            f"한국/미국 투자국가·주식형·유동성 필터 {summary.get('screenable_count', 0):,}개, "
             f"1차 상위권 {summary.get('preliminary_count', 0):,}개, "
             f"상세 재계산 {summary.get('analyzed_count', 0):,}개 · "
             f"최종 가격 기준: {summary.get('price_source', '-')} · "
@@ -1492,7 +1492,8 @@ def render_product_guide() -> None:
             현재 매수 가능 ETF에는 오직 `BUY_READY` 상태만 들어갑니다. 없으면 0개를 그대로 표시합니다.
 
             - **ETF universe:** 한국투자증권 국내/해외 종목정보파일에서 국내상장 ETF와 미국상장 ETF를 가져옵니다. 레버리지·인버스 ETF는 제외합니다.
-            - **1차 점수화:** 전체 universe에서 비주식형·저유동성·레버리지·인버스 상품을 제외한 뒤, 20일·60일·120일 수익률과 추세 위치를 일괄 계산해 상대강도 백분위를 먼저 만듭니다.
+            - **추적 시장 필터:** `FTD/분산일 확인` 탭에서 추적하는 한국 또는 미국 주식에 투자하는 ETF만 점수화합니다. 상장지가 한국/미국이어도 콜롬비아·인도·일본 등 다른 국가 주식 ETF는 제외합니다.
+            - **1차 점수화:** 추적 시장 필터를 통과한 universe에서 비주식형·저유동성·레버리지·인버스 상품을 제외한 뒤, 20일·60일·120일 수익률과 추세 위치를 일괄 계산해 상대강도 백분위를 먼저 만듭니다.
             - **상세 재계산:** 1차 상위권 ETF는 한투 일봉 API를 우선 사용해 OHLCV, 21EMA, 50일선, 200일선, 베이스, 피봇, 거래량 비율을 다시 계산합니다. 한투 일봉이 실패하면 Yahoo 가격으로 대체합니다.
 
             **Leadership Score**

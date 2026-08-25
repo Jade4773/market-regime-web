@@ -8,6 +8,10 @@ from market_pulse.products import (
     classify_etf_candidate,
     infer_category_from_text,
     infer_etf_category,
+    infer_investment_country,
+    is_screenable_equity_etf,
+    tracked_market_group,
+    tracked_signal_key,
 )
 
 
@@ -191,6 +195,46 @@ class EtfClassificationTest(unittest.TestCase):
             infer_etf_category({"index": "ETF", "note": "미국 AI 소프트웨어 테마", "ticker": "481180"}),
             "sector",
         )
+
+    def test_country_etf_outside_tracked_markets_is_not_screenable(self):
+        candidate = {
+            "ticker": "COLO",
+            "name": "GLOBAL X MSCI COLOMBIA ETF",
+            "korean_name": "",
+            "listing": "미국상장 ETF",
+            "country": infer_investment_country("GLOBAL X MSCI COLOMBIA ETF"),
+            "category": "country",
+        }
+
+        self.assertEqual(candidate["country"], "콜롬비아")
+        self.assertFalse(is_screenable_equity_etf(candidate))
+
+    def test_us_etf_from_global_x_brand_can_remain_screenable(self):
+        candidate = {
+            "ticker": "TEST",
+            "name": "GLOBAL X NASDAQ 100 ETF",
+            "korean_name": "",
+            "listing": "미국상장 ETF",
+            "country": infer_investment_country("GLOBAL X NASDAQ 100 ETF"),
+            "category": "broad",
+        }
+
+        self.assertEqual(candidate["country"], "미국")
+        self.assertTrue(is_screenable_equity_etf(candidate))
+
+    def test_us_listed_korea_etf_uses_korea_market_gate(self):
+        country = infer_investment_country("ISHARES MSCI SOUTH KOREA ETF")
+
+        self.assertEqual(country, "대한민국")
+        self.assertEqual(tracked_market_group(country), "korea")
+        self.assertEqual(tracked_signal_key("ISHARES MSCI SOUTH KOREA ETF", country), "kospi")
+
+    def test_domestic_listed_us_nasdaq_etf_uses_nasdaq_gate(self):
+        country = infer_investment_country("TIGER 미국나스닥100")
+
+        self.assertEqual(country, "미국")
+        self.assertEqual(tracked_market_group(country), "us")
+        self.assertEqual(tracked_signal_key("TIGER 미국나스닥100", country), "nasdaq_composite")
 
 
 if __name__ == "__main__":
