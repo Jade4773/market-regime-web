@@ -1,6 +1,13 @@
 import unittest
+from unittest.mock import patch
 
-from market_pulse.products import score_els_coupon, score_els_product, score_els_protection
+from market_pulse.products import (
+    infer_underlyings,
+    kofia_row_to_product,
+    score_els_coupon,
+    score_els_product,
+    score_els_protection,
+)
 
 
 class ElsScoringTest(unittest.TestCase):
@@ -50,6 +57,38 @@ class ElsScoringTest(unittest.TestCase):
         self.assertIn("방어", scored["상세 점수"])
         self.assertIn("/30", scored["상세 점수"])
         self.assertIn("/25", scored["상세 점수"])
+
+    def test_infer_underlyings_preserves_kosdaq150_index_name(self):
+        self.assertEqual(
+            infer_underlyings("KOSPI200 </br> KOSDAQ150 </br>"),
+            "KOSPI200 Index, KOSDAQ150 Index",
+        )
+
+    def test_kofia_row_enriches_incomplete_underlyings_from_detail_link(self):
+        vals = {
+            "val4": "NH투자증권",
+            "val5": "AA+",
+            "val6": "NH투자증권(ELS) 25105",
+            "val7": "2",
+            "val8": "KOSPI200 Index",
+            "val9": "KOSPI200 Index",
+            "val15": "17",
+            "val16": "20260825",
+            "val17": "20260903",
+            "val18": "원금비보장, 85-85-80-80-75-70/35 KI",
+            "val20": "https://example.test/nh-els-25105",
+            "val21": "26-09-03(오후 4시) 청약종료",
+            "val22": "KR6NH0006X95",
+            "val23": "-100",
+        }
+        with patch(
+            "market_pulse.products.fetch_detail_underlyings",
+            return_value="KOSPI200 Index, KOSDAQ150 Index",
+        ):
+            product = kofia_row_to_product(vals)
+
+        self.assertIsNotNone(product)
+        self.assertEqual(product["기초자산"], "KOSPI200 Index, KOSDAQ150 Index")
 
 
 if __name__ == "__main__":

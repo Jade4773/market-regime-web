@@ -44,6 +44,8 @@ DART_DERIVATIVE_URL = "https://dart.fss.or.kr/dsab007/main.do"
 INDEX_KEYWORDS = [
     "KOSPI",
     "코스피",
+    "KOSDAQ",
+    "코스닥",
     "S&P",
     "SPX",
     "NASDAQ",
@@ -91,6 +93,7 @@ ETF_HOLDING_LOOKBACK_SESSIONS = int(os.getenv("ETF_HOLDING_LOOKBACK_SESSIONS", "
 ETF_HOLDING_DISPLAY_LIMIT = int(os.getenv("ETF_HOLDING_DISPLAY_LIMIT", "12"))
 ELS_TOP_LIMIT = int(os.getenv("ELS_TOP_LIMIT", "5"))
 ELS_MAX_PER_ISSUER = int(os.getenv("ELS_MAX_PER_ISSUER", "2"))
+ELS_DETAIL_TIMEOUT_SECONDS = float(os.getenv("ELS_DETAIL_TIMEOUT_SECONDS", "6"))
 
 ETF_STATUS_PRIORITY = {
     "DATA_INCOMPLETE": 0,
@@ -720,7 +723,14 @@ def kofia_xml_to_els_products(xml_bytes: bytes) -> tuple[list[dict[str, str]], d
 
 def kofia_row_to_product(vals: dict[str, str]) -> dict[str, str] | None:
     name = vals.get("val6", "")
-    underlyings = strip_html_text(vals.get("val8", ""))
+    detail_link = vals.get("val20", "")
+    expected_underlying_count = parse_int(vals.get("val7"))
+    underlyings = kofia_underlyings_from_row(vals)
+    underlyings = enrich_underlyings_from_detail_if_needed(
+        underlyings,
+        detail_link,
+        expected_underlying_count,
+    )
     structure = strip_html_text(vals.get("val18", ""))
     row_text = " ".join([name, underlyings, structure])
     if not looks_like_open_index_els(row_text, underlyings=underlyings):
@@ -728,7 +738,6 @@ def kofia_row_to_product(vals: dict[str, str]) -> dict[str, str] | None:
     if not is_subscription_current(vals.get("val16"), vals.get("val17"), vals.get("val21")):
         return None
 
-    detail_link = vals.get("val20", "")
     return {
         "증권사": vals.get("val4", "-"),
         "상품명": name or "-",
@@ -744,6 +753,43 @@ def kofia_row_to_product(vals: dict[str, str]) -> dict[str, str] | None:
         "출처": "금투협 비교공시",
         "상세 링크": detail_link or KOFIA_ELS_PAGE_URL,
     }
+
+
+def kofia_underlyings_from_row(vals: dict[str, str]) -> str:
+    values = [strip_html_text(vals.get(f"val{idx}", "")) for idx in range(8, 14)]
+    return join_unique_underlyings(values)
+
+
+def enrich_underlyings_from_detail_if_needed(
+    underlyings: str,
+    detail_link: str,
+    expected_count: int | None,
+) -> str:
+    current = split_underlyings(underlyings)
+    if not detail_link or not expected_count or len(current) >= expected_count:
+        return underlyings
+
+    detail_underlyings = fetch_detail_underlyings(detail_link)
+    if not detail_underlyings:
+        return underlyings
+    return join_unique_underlyings([underlyings, detail_underlyings])
+
+
+def fetch_detail_underlyings(url: str) -> str:
+    try:
+        response = requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=ELS_DETAIL_TIMEOUT_SECONDS,
+            verify=False,
+        )
+        response.raise_for_status()
+    except Exception:
+        return ""
+
+    if not response.encoding:
+        response.encoding = response.apparent_encoding or "utf-8"
+    return infer_underlyings(response.text)
 
 
 def fetch_els_products_from_configured_kis_api() -> dict[str, Any]:
@@ -1049,8 +1095,48 @@ def first_present(fields: dict[str, str], keys: list[str], fallback: str) -> str
 
 def infer_underlyings(text: str) -> str:
     cleaned = strip_html_text(text)
-    found = [keyword for keyword in INDEX_KEYWORDS if keyword.upper() in cleaned.upper()]
-    return ", ".join(dict.fromkeys(found)) or "-"
+    found = extract_index_underlyings(cleaned)
+    return ", ".join(found) or "-"
+
+
+def extract_index_underlyings(text: str) -> list[str]:
+    patterns = [
+        (r"KOSPI\s*200(?:\s*Index)?", "KOSPI200 Index"),
+        (r"KOSDAQ\s*150(?:\s*Index)?", "KOSDAQ150 Index"),
+        (r"S\s*&\s*P\s*500(?:\s*Index)?", "S&P500 Index"),
+        (r"SPX(?:\s*Index)?", "S&P500 Index"),
+        (r"NASDAQ\s*100(?:\s*Index)?", "NASDAQ100 Index"),
+        (r"NASDAQ(?:\s*Composite)?(?:\s*Index)?", "NASDAQ Index"),
+        (r"NIKKEI\s*225(?:\s*Index)?", "Nikkei225 Index"),
+        (r"EURO\s*STOXX\s*50(?:\s*Index)?", "Euro Stoxx 50 Index"),
+        (r"EUROSTOXX\s*50(?:\s*Index)?", "Euro Stoxx 50 Index"),
+        (r"HSCEI(?:\s*Index)?", "HSCEI Index"),
+        (r"HANG\s*SENG(?:\s*Index)?", "Hang Seng Index"),
+        (r"코스피\s*200", "KOSPI200 Index"),
+        (r"코스닥\s*150", "KOSDAQ150 Index"),
+        (r"나스닥\s*100", "NASDAQ100 Index"),
+        (r"닛케이\s*225", "Nikkei225 Index"),
+        (r"항셍", "Hang Seng Index"),
+    ]
+    found = []
+    for pattern, label in patterns:
+        if re.search(pattern, text, re.IGNORECASE):
+            found.append(label)
+    return list(dict.fromkeys(found))
+
+
+def join_unique_underlyings(values: list[str]) -> str:
+    parts: list[str] = []
+    for value in values:
+        if not value:
+            continue
+        candidates = extract_index_underlyings(value) or split_underlyings(value)
+        for candidate in candidates:
+            normalized = candidate.upper().replace(" ", "")
+            if not normalized or any(normalized == item.upper().replace(" ", "") for item in parts):
+                continue
+            parts.append(candidate)
+    return ", ".join(parts) or "-"
 
 
 def infer_date_range(text: str) -> str:
@@ -1112,6 +1198,7 @@ def is_index_underlying(value: str) -> bool:
     index_markers = [
         "INDEX",
         "KOSPI",
+        "KOSDAQ",
         "S&P",
         "SPX",
         "NASDAQ",
@@ -1124,6 +1211,7 @@ def is_index_underlying(value: str) -> bool:
         "HANG SENG",
         "항셍",
         "코스피",
+        "코스닥",
         "나스닥",
         "닛케이",
     ]
@@ -1354,6 +1442,11 @@ def score_els_product(product: dict[str, str]) -> dict[str, str]:
 def parse_number(value: Any) -> float:
     match = re.search(r"-?\d+(?:\.\d+)?", str(value or "").replace(",", ""))
     return float(match.group(0)) if match else 0.0
+
+
+def parse_int(value: Any) -> int | None:
+    match = re.search(r"\d+", str(value or ""))
+    return int(match.group(0)) if match else None
 
 
 def extract_els_barrier_profile(text: str) -> dict[str, Any]:
