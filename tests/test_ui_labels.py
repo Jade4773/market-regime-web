@@ -1,6 +1,6 @@
 import unittest
 
-from market_pulse.ui import signal_jump_display_value
+from market_pulse.ui import holding_sell_guide_markdown, signal_jump_display_value
 
 
 class UiLabelTest(unittest.TestCase):
@@ -19,6 +19,13 @@ class UiLabelTest(unittest.TestCase):
         )
 
         self.assertEqual(label, "중립/관망")
+
+    def test_holding_sell_guide_explains_low_volume_high_label(self):
+        guide = holding_sell_guide_markdown()
+
+        self.assertIn("판정 라벨 해석", guide)
+        self.assertIn("신고가 거래량 부족", guide)
+        self.assertIn("기관성 수요가 강하게 확인되지 않았다는 뜻", guide)
 
 
 if __name__ == "__main__":

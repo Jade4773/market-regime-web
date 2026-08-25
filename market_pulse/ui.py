@@ -35,7 +35,7 @@ TAB_LABELS = {
     "risk": "보유/매도",
 }
 
-APP_VERSION = "holding-exit-v2-cache-1h"
+APP_VERSION = "holding-exit-v3-label-guide"
 ELS_CACHE_VERSION = "els-score-top5-v3"
 ELS_FRONT_COLUMNS = ["ELS 점수", "상품명", "쿠폰", "기초자산"]
 
@@ -1205,31 +1205,47 @@ def reason_code_label(code: str) -> str:
 
 def render_holding_sell_guide() -> None:
     with st.expander("보유/매도 판정 방식", expanded=False):
-        st.markdown(
-            f"""
-            **검토 대상**
+        st.markdown(holding_sell_guide_markdown())
 
-            - 상품추천 ETF 스크리너의 상세 재계산 대상 중 최근 40거래일, 약 8주 안에 `BUY_READY` 조건이 나온 ETF만 표시합니다.
-            - 과거 추천 기록 DB가 따로 있는 것은 아니므로, 현재 확보한 ETF 일봉으로 과거 신호를 다시 계산합니다.
-            - 실제 매수가를 모르기 때문에 `BUY_READY` 최초 발생일의 종가를 가정 매수가로 사용합니다.
-            - 이 방식은 공식 CAN SLIM 규칙이 아니라 **O'Neil-inspired ETF Exit Strategy**, 즉 ETF용 변형 전략입니다.
 
-            **판정 우선순위**
+def holding_sell_guide_markdown() -> str:
+    return f"""
+    **검토 대상**
 
-            - **매도/손절:** 가정 매수가 대비 -{ETF_STOP_LOSS_PCT:g}% 절대 손절선 이탈
-            - **돌파 실패 경고:** BUY_READY 이후 {ETF_FAILED_BREAKOUT_SESSIONS}거래일 안에 피벗 아래로 재이탈. 21EMA와 거래량까지 훼손되면 조기매도 검토
-            - **50SMA 이탈:** 50일선을 이탈하면 강한 경계, 거래량 {ETF_HIGH_VOLUME_RATIO:g}배 이상이면 매도 우선
-            - **21EMA 이탈:** 수익권에서 21EMA를 거래량 {ETF_HIGH_VOLUME_RATIO:g}배 이상으로 이탈하면 1/3~1/2 일부매도 검토
-            - **수익 반납 경고:** 최고 미실현 수익이 +{ETF_ROUND_TRIP_TRIGGER_GAIN_PCT:g}% 이상이었다가 현재 수익이 +{ETF_ROUND_TRIP_REMAINING_GAIN_PCT:g}% 안팎으로 줄어들면 방어
-            - **분산일·상대강도:** 분산일이 누적되고 ETF가 21EMA 아래이며 벤치마크 대비 {ETF_RS_WEAKENING_DAYS}거래일 상대강도가 약하면 일부매도 검토
-            - **섹터/테마 이익구간:** Broad Index ETF는 추세 추종을 우선하고, Sector/Theme ETF는 피벗 대비 +{ETF_PROFIT_ZONE_START_PCT:g}~{ETF_PROFIT_ZONE_END_PCT:g}%에서 이익실현 검토
-            - **8주 보유 후보:** BUY_READY 이후 {ETF_FAST_LEADER_SESSIONS}거래일 안에 +{ETF_FAST_LEADER_GAIN_PCT:g}% 이상 급등하면 명확한 매도 신호 전까지 8주 보유 후보
-            - **추가매수 후보:** 하락 물타기는 금지하고, 가정 매수가 대비 +{ETF_PYRAMID2_MIN_PCT:g}~{ETF_PYRAMID2_MAX_PCT:g}%는 2차, +{ETF_PYRAMID3_MIN_PCT:g}~{ETF_PYRAMID3_MAX_PCT:g}%는 3차 추가매수 후보로만 표시
+    - 상품추천 ETF 스크리너의 상세 재계산 대상 중 최근 40거래일, 약 8주 안에 `BUY_READY` 조건이 나온 ETF만 표시합니다.
+    - 과거 추천 기록 DB가 따로 있는 것은 아니므로, 현재 확보한 ETF 일봉으로 과거 신호를 다시 계산합니다.
+    - 실제 매수가를 모르기 때문에 `BUY_READY` 최초 발생일의 종가를 가정 매수가로 사용합니다.
+    - 이 방식은 공식 CAN SLIM 규칙이 아니라 **O'Neil-inspired ETF Exit Strategy**, 즉 ETF용 변형 전략입니다.
 
-            이 탭은 새 ETF를 고르는 화면이 아니라, 이미 `BUY_READY`가 떴던 ETF를 산 것으로 가정했을 때
-            지금 **보유할지, 줄일지, 팔지**를 점검하는 화면입니다.
-            """
-        )
+    **판정 우선순위**
+
+    - **매도/손절:** 가정 매수가 대비 -{ETF_STOP_LOSS_PCT:g}% 절대 손절선 이탈
+    - **돌파 실패 경고:** BUY_READY 이후 {ETF_FAILED_BREAKOUT_SESSIONS}거래일 안에 피벗 아래로 재이탈. 21EMA와 거래량까지 훼손되면 조기매도 검토
+    - **50SMA 이탈:** 50일선을 이탈하면 강한 경계, 거래량 {ETF_HIGH_VOLUME_RATIO:g}배 이상이면 매도 우선
+    - **21EMA 이탈:** 수익권에서 21EMA를 거래량 {ETF_HIGH_VOLUME_RATIO:g}배 이상으로 이탈하면 1/3~1/2 일부매도 검토
+    - **수익 반납 경고:** 최고 미실현 수익이 +{ETF_ROUND_TRIP_TRIGGER_GAIN_PCT:g}% 이상이었다가 현재 수익이 +{ETF_ROUND_TRIP_REMAINING_GAIN_PCT:g}% 안팎으로 줄어들면 방어
+    - **분산일·상대강도:** 분산일이 누적되고 ETF가 21EMA 아래이며 벤치마크 대비 {ETF_RS_WEAKENING_DAYS}거래일 상대강도가 약하면 일부매도 검토
+    - **섹터/테마 이익구간:** Broad Index ETF는 추세 추종을 우선하고, Sector/Theme ETF는 피벗 대비 +{ETF_PROFIT_ZONE_START_PCT:g}~{ETF_PROFIT_ZONE_END_PCT:g}%에서 이익실현 검토
+    - **8주 보유 후보:** BUY_READY 이후 {ETF_FAST_LEADER_SESSIONS}거래일 안에 +{ETF_FAST_LEADER_GAIN_PCT:g}% 이상 급등하면 명확한 매도 신호 전까지 8주 보유 후보
+    - **추가매수 후보:** 하락 물타기는 금지하고, 가정 매수가 대비 +{ETF_PYRAMID2_MIN_PCT:g}~{ETF_PYRAMID2_MAX_PCT:g}%는 2차, +{ETF_PYRAMID3_MIN_PCT:g}~{ETF_PYRAMID3_MAX_PCT:g}%는 3차 추가매수 후보로만 표시
+
+    **판정 라벨 해석**
+
+    - **매도/손절:** ETF가 가정 매수가 대비 -{ETF_STOP_LOSS_PCT:g}% 손절선을 이탈했습니다. 섹터/테마 ETF는 변동성이 커서 손실 확대 전 정리를 우선합니다.
+    - **매도 / 강한 매도 경계:** 50일선이 깨졌습니다. 특히 거래량이 평균 대비 {ETF_HIGH_VOLUME_RATIO:g}배 이상이면 중기 추세 훼손으로 보고 매도를 우선 검토합니다.
+    - **조기매도 검토 / 돌파 실패 경고:** `BUY_READY` 직후 피벗을 다시 밑돌았습니다. 돌파가 진짜 수요로 이어지지 못했을 가능성이 있어 며칠 더 기다리기보다 방어적으로 봅니다.
+    - **일부 매도 검토:** 수익권에서 21EMA 이탈, 큰 하락일, 분산일 누적 같은 경고가 나왔습니다. 전량 매도보다는 1/3~1/2 축소처럼 수익을 지키는 대응을 뜻합니다.
+    - **수익 반납 경고:** 한때 충분한 미실현 수익이 있었지만 대부분 되돌렸습니다. 큰 수익이 본전 근처로 사라지는 것을 막기 위한 방어 신호입니다.
+    - **상대강도 약화:** ETF 자체가 급락하지 않아도 기준 시장보다 약하게 움직입니다. 주도 ETF에서 밀려날 조짐이므로 비중 확대는 보류합니다.
+    - **신고가 거래량 부족:** 가격은 신고가 또는 신고가 근처지만 거래량이 평균보다 적습니다. 매도 신호라기보다는 기관성 수요가 강하게 확인되지 않았다는 뜻이라, 보유는 가능하되 신규 진입이나 추가매수 신뢰도는 낮게 봅니다.
+    - **이익실현 검토 / 이익 보호 강화:** 섹터·테마 ETF가 피벗 대비 +{ETF_PROFIT_ZONE_START_PCT:g}~{ETF_PROFIT_ZONE_END_PCT:g}% 이상 올라 단기 과열 구간에 들어왔습니다. 일부 환매나 방어선을 끌어올리는 구간입니다.
+    - **2차/3차 추가매수 후보:** 손실 물타기가 아니라 수익 중인 포지션이 정해진 구간까지 오른 경우만 추가매수 후보로 표시합니다.
+    - **8주 보유 후보:** 짧은 기간에 +{ETF_FAST_LEADER_GAIN_PCT:g}% 이상 오른 강한 ETF입니다. 명확한 매도 신호가 나오기 전까지 조급하게 팔지 않는 예외 후보입니다.
+    - **보유 유지:** 손절, 추세 이탈, 수익 반납, 이익실현 조건이 아직 확인되지 않은 상태입니다. 기존 방어선을 기준으로 계속 관찰합니다.
+
+    이 탭은 새 ETF를 고르는 화면이 아니라, 이미 `BUY_READY`가 떴던 ETF를 산 것으로 가정했을 때
+    지금 **보유할지, 줄일지, 팔지**를 점검하는 화면입니다.
+    """
 
 
 def render_products_tab(snapshot: dict[str, Any]) -> None:
